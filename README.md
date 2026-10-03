@@ -1,105 +1,97 @@
-# Receply — local demo copy
+# Receply — AI hotel receptionist (local)
 
-The whole Receply product running on this PC with Docker Desktop: the same Chatwoot, n8n workflows,
-database rules and AI as production on the VPS — but **a demo hotel with no real guests**, its own logins
-and secrets, a **test** Google Sheet and calendar, and nothing reachable from the internet.
-
-Guests reach it on **WhatsApp only** for now (the test number, see [WhatsApp](#whatsapp)); the demo-website chat is
-switched off — bring it back with `$env:WITH_WEBSITE='1'; .\scripts\setup.ps1` (then http://localhost:8080).
+Receply answers a hotel's guests on **WhatsApp** with an AI receptionist: questions about rooms and services,
+availability, bookings and cancellations, in Albanian, Montenegrin/Serbian or English. The hotel owner watches
+every conversation live in Chatwoot and can take over at any moment. Everything in this folder runs on this PC
+with Docker Desktop, for a demo hotel ("Receply Demo Hotel", 10 rooms, no real guests).
 
 | Open | What it is |
 |---|---|
-| http://localhost:3000 | Chatwoot — the owner's inbox: every conversation live, take over any time |
-| http://localhost:5556 | n8n — the 13 workflows that run the receptionist, and every execution |
-| localhost:5433 | The database (DBeaver: database `n8n_memory`, user `chatwoot`, password = `POSTGRES_PASSWORD` in `.env`) |
+| http://localhost:3000 | **Chatwoot** — the owner's inbox: every conversation live, take over any time |
+| http://localhost:5556 | **n8n** — the workflows that run the receptionist, and a log of every run |
+| localhost:5433 | **The database** (e.g. DBeaver: database `n8n_memory`, user `chatwoot`, password = `POSTGRES_PASSWORD` in `.env`) |
 
-Logins: `secrets\LOGINS.txt` (created by the setup; keep it private).
-Production n8n stays at http://localhost:5555 when the SSH tunnel is open — a different system.
+Logins for Chatwoot and n8n: `secrets\LOGINS.txt` (copy-paste the passwords).
 
-## Start, stop
+## Start and stop
 
 ```powershell
-.\scripts\start.ps1     # starts Docker Desktop if needed, then everything
-.\scripts\stop.ps1      # stops everything; all data is kept
+.\scripts\start.ps1           # starts Docker Desktop if needed, then everything
+.\scripts\whatsapp-local.ps1  # connects the WhatsApp number to this PC (guests can now write)
+.\scripts\stop.ps1            # stops everything; all data is kept
 ```
 
-First time on a PC (or after deleting the Docker volumes): `.\scripts\setup.ps1` — it is safe to run again.
+First time on a PC (or after deleting the data): `.\scripts\setup.ps1` — it builds everything and is safe to
+run again. Requirements: Docker Desktop, Node.js, Python 3, and the `.env` and `secrets\` from the owner.
 
-## What is the same as production
+## How a guest message is handled
 
-- Images pinned to the exact builds production runs (Chatwoot 4.16.2, n8n 2.32.7, Postgres 15 + pgvector, Redis 7.4).
-- The 13 production workflows (receptionist, the four modules, the booking/cancellation tools, email,
-  Sheet Sync, reminder planner) with the same ids and logic.
-- The database structure and all its rules (two-step booking, no double bookings, real room numbers...).
-- The AI: OpenAI gpt-4o with the production OpenAI credential.
+1. The guest writes to the WhatsApp number **+1 555 146 8677** (a Meta test number: only phones registered in
+   the Meta app can use it).
+2. Meta delivers the message to `https://demo.receply.net/webhooks/whatsapp/…` — a Cloudflare tunnel
+   (`cloudflared` container) to this PC that lets **only** WhatsApp's webhook through; every other path answers 404.
+3. **Chatwoot** stores the message and sends it to **n8n**.
+4. n8n checks whether the AI should answer (a staff member may have taken over; escalation words such as
+   "human" hand the guest to the owner), then the **AI agent** (OpenAI gpt-4o) answers using its memory of the
+   guest and its tools: rooms, availability, hotel information, the guest's bookings, booking, cancelling, and
+   asking for the owner.
+5. The reply goes back through Chatwoot to WhatsApp, and every turn is logged in the database.
 
-## What is different on purpose
+### Bookings — always two guest messages
 
-| Production | Local copy |
+- **Prepare:** the AI checks every detail (name, phone, email, guests, dates, the room's capacity, existing
+  bookings, the hotel calendar) and **holds** the room for 30 minutes. The guest sees a summary.
+- **Confirm:** only the guest's **next** message can confirm. Then the booking gets a ticket, an entry in the
+  calendar, a confirmation email to the guest and a notification to the owner.
+- Cancelling works the same way: the AI shows the booking first and cancels only after the next message.
+- The database enforces these rules itself: no double bookings, real room numbers only, no confirmation in
+  the same message as the summary.
+
+## Where the data lives
+
+| Data | Where |
 |---|---|
-| Real hotel, real guests | "Receply Demo Hotel", the 10 rooms only, no guests or history |
-| The hotel's Google Sheet and calendar | "Receply LOCAL test sheet" and "Receply LOCAL test calendar" (in the same Google account) |
-| WhatsApp, Instagram, website widget | The demo website widget and an API test inbox |
-| Owner phone alerts on the production ntfy topic | Their own topic: `secrets\local-topic.txt` (subscribe in the ntfy app to see local alerts) |
-| Public through Cloudflare | Only on this PC (127.0.0.1) |
+| Rooms, guests, bookings, conversation log, AI memory | Postgres database `n8n_memory` |
+| Conversations as the owner sees them | Chatwoot (its own database `chatwoot_production`) |
+| Room list the owner edits; read-only booking list | Google Sheet **"Receply LOCAL test sheet"** (synced every 10 minutes) |
+| Bookings as calendar entries | Google Calendar **"Receply LOCAL test calendar"** |
 
-Things that still really happen (they use the copied production credentials): calls to OpenAI, guest
-emails through Resend (to whatever address the test guest gives), owner emails from the Gmail account to
-the operator, and pushes to the local ntfy topic. Use test email addresses such as `delivered@resend.dev`.
+Things that really happen when you test: calls to OpenAI, emails to the guest's address (use a test address
+such as `delivered@resend.dev`), emails to the owner, and phone alerts on the ntfy topic in
+`secrets\local-topic.txt` (subscribe to it in the ntfy app).
 
-## WhatsApp
-
-The local copy can take over the WhatsApp **test number +1 555 146 8677** — the same number production uses
-(Meta gives one test number per business account, and only phones registered in Meta can use it).
+## WhatsApp commands
 
 ```powershell
-.\scripts\whatsapp-local.ps1        # WhatsApp -> this PC (production's WhatsApp pauses)
-.\scripts\whatsapp-production.ps1   # WhatsApp -> back to the server; stops the tunnel
-python .\scripts\whatsapp-status.py # where does WhatsApp go right now?
-node .\scripts\watch-whatsapp.js    # watch messages and replies arrive (with WhatsApp delivery status)
+.\scripts\whatsapp-local.ps1          # point the number to this PC (starts the tunnel)
+python .\scripts\whatsapp-status.py   # where does the number point right now?
+node .\scripts\watch-whatsapp.js      # watch messages and replies arrive, with delivery status
+.\scripts\whatsapp-production.ps1     # release the number again and stop the tunnel
 ```
 
-How it works: Meta delivers the number's messages to a **number-level webhook** (it overrides the app's Callback
-URL — changing that in Meta's dashboard does nothing). The switch scripts move it between
-`https://chatwoot.receply.net/webhooks/whatsapp/%2B15551468677` (production) and
-`https://demo.receply.net/webhooks/whatsapp/%2B15551468677` (this PC), checking first that the target answers
-Meta's verification — a failed switch changes nothing. `demo.receply.net` is the Cloudflare tunnel
-`receply-local-demo` (cloudflared container, `cloudflared\config.yml`), which lets ONLY `/webhooks/whatsapp/`
-through to the local Chatwoot; every other path answers 404. The local WhatsApp inbox uses the same Meta token and
-verify token as production (`secrets\whatsapp-provider.json`).
-
-Keep in mind:
-- While WhatsApp is on this PC, the PC must be on, online and running Receply LOCAL, or the number goes silent.
-- Switch back after the demo. Running `whatsapp-local.ps1` again later is fine.
-- Editing and saving the WhatsApp inbox in production's Chatwoot makes production re-claim the number (Chatwoot
-  re-sets the number-level webhook on save) — do not touch it while the number is here. The local Chatwoot tries
-  the same with `http://localhost:3000`, which Meta cannot reach, so that attempt always fails harmlessly.
+While the number points here, this PC must be on, online and running, or the number goes silent.
 
 ## Files
 
 | Path | What |
 |---|---|
-| `docker-compose.yml` | The containers |
-| `.env` | Local passwords and keys — generated, never commit |
-| `secrets\` | Logins, the copied (encrypted) production credentials and their key, local tokens — keep private |
-| `sql\00-schema.sql` | Database structure from production (no data); `sql\rooms-data.sql` the 10 rooms |
-| `n8n\workflow-templates\` | The production workflows with placeholders (made by `scripts\localize.js`); the setup fills them in and imports them |
-| `chatwoot\setup.rb`, `chatwoot\whatsapp.rb` | Create the Chatwoot account, inboxes, bot and webhook; the WhatsApp inbox |
-| `demo-site\` | The demo hotel website |
-| `scripts\` | setup / start / stop, and `localize.js` to refresh the workflows from production |
+| `docker-compose.yml` | The containers: Chatwoot (`rails`, `sidekiq`), `postgres`, `redis`, `n8n`, `cloudflared` |
+| `.env` | Passwords and keys for the containers — never share |
+| `secrets\` | Logins, the encrypted service credentials and their key, tokens — never share |
+| `sql\00-schema.sql`, `sql\rooms-data.sql` | Database structure and rules; the 10 demo rooms |
+| `n8n\workflow-templates\` | The 13 workflows; the setup fills in this PC's values and imports them |
+| `chatwoot\setup.rb`, `chatwoot\whatsapp.rb` | Create the Chatwoot account, bot, webhook and the WhatsApp inbox |
+| `cloudflared\config.yml` | The tunnel's rule: only `/webhooks/whatsapp/` reaches Chatwoot |
+| `scripts\` | setup / start / stop, the WhatsApp commands, and `test.js` (an automatic booking test) |
 
 ## GitHub
 
-This folder is a git repository. `.gitignore` keeps `.env` and `secrets\` (every password, key, token and login)
-off GitHub — never remove those lines; keep the repository **private**. On another PC, `git clone` gives everything
-except those two: copy them over privately (USB, password manager), then run `.\scripts\setup.ps1`.
-
-## Refresh the workflows from production
-
-After production changes, export its workflows and run (from the n8n_claude project):
-`node C:\Receply-Local\scripts\localize.js <export.json> <client.txt>` then `.\scripts\setup.ps1`.
+`.gitignore` keeps `.env` and `secrets\` off GitHub — never remove those lines, keep the repository
+**private**, and only update it with `git add .`, `git commit -m "…"`, `git push` (never upload a zip of the
+folder: a zip includes the secrets). On another PC, copy `.env` and `secrets\` privately, then run
+`.\scripts\setup.ps1`.
 
 ## Start over
 
-`docker compose down -v` deletes all local data (conversations, bookings, n8n); then `.\scripts\setup.ps1`.
-The test Sheet and calendar stay in Google and are reused (delete `secrets\google-test.json` to make new ones).
+`docker compose down -v` deletes all local data (conversations, bookings, n8n); then run `.\scripts\setup.ps1`.
+The test Sheet and calendar stay in Google and are reused.
