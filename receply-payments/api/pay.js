@@ -46,7 +46,7 @@ module.exports = async (req, res) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(process.env.PAYMENT_WEBHOOK_SECRET ? { 'X-Receply-Secret': process.env.PAYMENT_WEBHOOK_SECRET } : {}),
+          ...(process.env.PAYMENT_WEBHOOK_SECRET ? { 'X-Receply-Key': process.env.PAYMENT_WEBHOOK_SECRET } : {}),
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(15000),
