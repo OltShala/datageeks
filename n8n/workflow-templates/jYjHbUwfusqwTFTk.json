@@ -1,0 +1,154 @@
+[
+ {
+  "updatedAt": "2026-10-01T13:01:04.000Z",
+  "createdAt": "2026-06-28T15:00:32.946Z",
+  "id": "jYjHbUwfusqwTFTk",
+  "name": "Send Email via Resend (AI Tool)",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+   {
+    "id": "em-trigger",
+    "name": "Email Trigger",
+    "type": "n8n-nodes-base.executeWorkflowTrigger",
+    "typeVersion": 1.1,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "inputSource": "passthrough"
+    }
+   },
+   {
+    "id": "em-parse",
+    "name": "Parse Input",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     220,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const inp = $input.first().json || {};\nlet d = inp;\nif (typeof inp.query === 'string') { try { d = JSON.parse(inp.query); } catch (e) { d = inp; } }\nelse if (inp.query && typeof inp.query === 'object') { d = inp.query; }\nreturn [{ json: d }];"
+    }
+   },
+   {
+    "id": "em-send",
+    "name": "Send via Resend",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     440,
+     0
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://api.resend.com/emails",
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ from: 'Receply <support@receply.net>', to: [$json.to], subject: $json.subject, text: $json.message }) }}",
+     "options": {}
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "DjRkKR2CfiOZ60Uu",
+      "name": "Resend API (support@receply.net)"
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "em-return",
+    "name": "Return",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     660,
+     0
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "651bfbb3-c56e-4d95-a1f5-426ec3950344",
+        "name": "result",
+        "type": "string",
+        "value": "={{ $json.id ? ('Email sent to ' + $('Parse Input').item.json.to + ' from support@receply.net.') : ('Email NOT sent to ' + $('Parse Input').item.json.to + ': ' + String(($json.error && ($json.error.message || $json.error)) || 'unknown error').slice(0, 160)) }}"
+       },
+       {
+        "id": "5c9dd5d7-d553-44f4-9c2b-e40e7488f40c",
+        "name": "sent",
+        "type": "boolean",
+        "value": "={{ !!$json.id }}"
+       }
+      ]
+     },
+     "options": {}
+    }
+   }
+  ],
+  "connections": {
+   "Email Trigger": {
+    "main": [
+     [
+      {
+       "node": "Parse Input",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Parse Input": {
+    "main": [
+     [
+      {
+       "node": "Send via Resend",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Send via Resend": {
+    "main": [
+     [
+      {
+       "node": "Return",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "saveDataErrorExecution": "all",
+   "saveDataSuccessExecution": "all",
+   "saveManualExecutions": true,
+   "saveExecutionProgress": true
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+   "name": null,
+   "description": null
+  }
+ }
+]

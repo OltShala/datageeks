@@ -1,0 +1,392 @@
+[
+ {
+  "updatedAt": "2026-10-01T14:14:14.000Z",
+  "createdAt": "2026-10-01T11:54:11.391Z",
+  "id": "rcpToolPrepare01",
+  "name": "Receply · Prepare Reservation (AI tool)",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+   {
+    "id": "3dc76bc1-3a47-4f96-98ee-30e54da8580a",
+    "name": "Tool Input",
+    "type": "n8n-nodes-base.executeWorkflowTrigger",
+    "typeVersion": 1.1,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "inputSource": "passthrough"
+    }
+   },
+   {
+    "id": "d392c485-70e2-45e0-84a0-6fad0332bf85",
+    "name": "Tenant Guard",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     220,
+     0
+    ],
+    "parameters": {
+     "jsCode": "// Tenant guard. \"Prepare Reservation\" is SHARED by every client: it must be told whose data this is (account id, or the\n// calling workflow for the internal test chat) and whose calendar to use. No default: a guess is how a\n// booking lands in the wrong hotel.\nconst inp = $input.first().json || {};\nlet d = inp;\nif (typeof inp.query === 'string') { try { d = JSON.parse(inp.query); } catch (e) { d = inp; } }\nelse if (inp.query && typeof inp.query === 'object') { d = inp.query; }\nconst acct = String(d.accountId ?? '').trim(), wf = String(d.workflowId ?? '').trim();\nif (!/^\\d+$/.test(acct) && !wf) throw new Error('Prepare Reservation was called without accountId or workflowId - refusing to guess whose data to use.');\nconst bad = (v) => !v || typeof v !== 'string' || v.startsWith('__RECEPLY_');\nif (bad(d.calendarId)) throw new Error('Prepare Reservation was called without this client calendarId (received ' + String(d.calendarId) + ') - refusing to guess whose calendar to use.');\nreturn [{ json: Object.assign({}, d, { accountId: acct, workflowId: wf }) }];"
+    }
+   },
+   {
+    "id": "0227948b-8473-4ab7-a575-079cbd3b5002",
+    "name": "Prepare",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     440,
+     0
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT receply_prepare_booking($1::jsonb) AS r",
+     "options": {
+      "queryReplacement": "={{ [ JSON.stringify({ account_id: String($json.accountId || ''), workflow_id: String($json.workflowId || ''), turn: String($json.turn || ''), first_name: String($json.Name || ''), last_name: String($json.Surname || ''), phone: String($json.PhoneNumber || ''), email: String($json.Email || ''), guests: String($json.Guests || ''), room_number: String($json.RoomNumber || ''), check_in: String($json.CheckInDate || ''), check_out: String($json.CheckOutDate || ''), language: String($json.Language || ''), conversation_id: String($json.conversationId || ''), channel: String($json.channel || ''), whatsapp_phone: String($json.whatsappPhone || '') }) ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueRegularOutput",
+    "alwaysOutputData": true
+   },
+   {
+    "id": "1ab355ea-3f75-41cd-b781-e53521addc26",
+    "name": "Held?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     660,
+     0
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose",
+       "version": 2
+      },
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "21329610-8f72-439b-8d63-5f98518d56c0",
+        "leftValue": "={{ !!($json.r && $json.r.ok === true) }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "22cba36a-8ffa-4b1f-9755-02411f0dba4a",
+    "name": "Calendar Check",
+    "type": "n8n-nodes-base.googleCalendar",
+    "typeVersion": 1.3,
+    "position": [
+     880,
+     -80
+    ],
+    "parameters": {
+     "resource": "event",
+     "operation": "getAll",
+     "returnAll": true,
+     "calendar": {
+      "__rl": true,
+      "mode": "id",
+      "value": "={{ $('Tenant Guard').first().json.calendarId }}"
+     },
+     "timeMin": "={{ $('Prepare').first().json.r.check_in_at }}",
+     "timeMax": "={{ $('Prepare').first().json.r.check_out_at }}",
+     "options": {
+      "recurringEventHandling": "expand"
+     }
+    },
+    "credentials": {
+     "googleCalendarOAuth2Api": {
+      "id": "8wAB0uxntdU6yfvs",
+      "name": "Google Calendar account"
+     }
+    },
+    "executeOnce": true,
+    "alwaysOutputData": true,
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "d4c3e1d0-99a2-4180-bd2b-d537cc4542d6",
+    "name": "Calendar Verdict",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     1100,
+     -80
+    ],
+    "parameters": {
+     "jsCode": "// Bookings entered by hand exist only in the hotel calendar. An entry naming this room (Room / Dhoma / Soba\n// <number>) during the stay blocks it. An entry during the stay that names NONE of the hotel's room numbers\n// (\"Family Suite - Anna\", 2026-10-01) could be for any room: refuse to guess, hold nothing, hand over to a\n// person. All-day entries count by date, so one starting on the check-out day does not. If the calendar\n// cannot be read, fail safe: nothing stays held. Event titles never reach the AI.\nconst r = $('Prepare').first().json.r;\nconst evs = $input.all().map((i) => i.json || {});\nif (evs.find((e) => e.error)) return [{ json: { free: false, reason: 'calendar check failed', message: 'The hotel calendar could not be checked right now, so nothing is held. Apologize and offer to connect the guest with a person, or try again in a moment.' } }];\nconst esc = (s) => String(s).replace(/[.*+?^$(){}|[\\]\\\\]/g, '\\\\$&');\nconst re = new RegExp('\\\\b(room|dhoma|soba)\\\\s*' + esc(r.room) + '\\\\b', 'i');\nconst rooms = (r.all_rooms || []).map(String);\nconst namesARoom = (t) => rooms.some((n) => new RegExp('(^|[^0-9A-Za-z])' + esc(n) + '([^0-9A-Za-z]|$)').test(t));\nconst overlaps = (e) => (e.start && e.start.date && !e.start.dateTime) ? (e.start.date < String(r.check_out) && String((e.end && e.end.date) || e.start.date) > String(r.check_in)) : true;\nconst live = evs.filter((e) => e.id && e.status !== 'cancelled' && overlaps(e));\nconst clash = live.find((e) => re.test(String(e.summary || '')));\nif (clash) return [{ json: { free: false, reason: 'calendar entry for the room', message: 'Room ' + r.room + ' already has an entry in the hotel calendar for part of those dates, so nothing is held. Check another suitable room with \"Check Availability\" and prepare again.' } }];\nconst unclear = rooms.length ? live.find((e) => !namesARoom(String(e.summary || ''))) : null;\nif (unclear) return [{ json: { free: false, reason: 'calendar entry without a room number', message: 'The hotel calendar has an entry during these dates that does not say which room it is for, so no room can be confirmed free for these dates and nothing is held. Do not offer other rooms for these dates. Apologize, call \"Escalate To Human\" with the reason \"calendar entry without a room number, ' + r.check_in + ' to ' + r.check_out + '\", and tell the guest a team member will confirm availability.' } }];\nreturn [{ json: { free: true } }];"
+    }
+   },
+   {
+    "id": "89c90c7a-8cb2-486a-bcb3-4a5149546a9f",
+    "name": "Free?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     1320,
+     -80
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose",
+       "version": 2
+      },
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "1395f262-d348-42b3-b91d-245281f25225",
+        "leftValue": "={{ $json.free === true }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "04eb8fc9-31a2-48eb-8452-47addabb78d0",
+    "name": "Return Summary",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     1540,
+     -160
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "63d0227b-ac7a-4632-8b9f-3e0c04aec27b",
+        "name": "result",
+        "type": "string",
+        "value": "=Room {{ $('Prepare').first().json.r.room }} ({{ $('Prepare').first().json.r.room_type || 'room' }}{{ $('Prepare').first().json.r.persons ? ', up to ' + $('Prepare').first().json.r.persons + ' guests' : '' }}) is HELD for this guest until {{ $('Prepare').first().json.r.held_until_local }} (hotel time). NOTHING IS BOOKED YET - tell the guest you are holding the room for them; never say it is booked or reserved.\nSummary to show the guest, in their language, with these exact values (they are what will be booked): {{ $('Prepare').first().json.r.nights }} night(s); check-in {{ $('Prepare').first().json.r.check_in }} from {{ $('Prepare').first().json.r.check_in_time }}; check-out {{ $('Prepare').first().json.r.check_out }} by {{ $('Prepare').first().json.r.check_out_time }}; room {{ $('Prepare').first().json.r.room }}; {{ $('Prepare').first().json.r.guests }} guest(s); booking name {{ $('Prepare').first().json.r.name }}; the confirmation will be emailed to {{ $('Prepare').first().json.r.email }}.\nIf any value differs from what the guest told you, call \"Prepare Reservation\" again with the corrected details instead of showing it. Otherwise ask the guest to confirm this summary, then stop and wait. When their NEXT message clearly confirms, call \"Book Reservation\" with their email."
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "c00eafd4-fac6-4f93-a0d0-bb8ed29dee27",
+    "name": "Release Hold",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     1540,
+     0
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT receply_release_hold($1::jsonb) AS released",
+     "options": {
+      "queryReplacement": "={{ [ JSON.stringify({ account_id: String($('Tenant Guard').first().json.accountId || ''), workflow_id: String($('Tenant Guard').first().json.workflowId || ''), hold_code: String($('Prepare').first().json.r.hold_code || ''), reason: 'released: ' + String($('Calendar Verdict').first().json.reason || '') }) ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "c4536e3b-6a5d-4306-90f1-95daff266f54",
+    "name": "Return Busy",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     1760,
+     0
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "c83e534b-f007-498b-989b-71da371766de",
+        "name": "result",
+        "type": "string",
+        "value": "={{ $('Calendar Verdict').first().json.message }}"
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "0efbb503-4369-48b1-b03d-4c4b97ea138e",
+    "name": "Return Problem",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     880,
+     160
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "d96a4dc4-3d5a-476e-ae12-a18c18bca5b8",
+        "name": "result",
+        "type": "string",
+        "value": "={{ ($('Prepare').first().json.r && $('Prepare').first().json.r.message) || ('The reservation could not be prepared (' + String(($('Prepare').first().json.error && ($('Prepare').first().json.error.message || $('Prepare').first().json.error)) || 'unknown error') + '). Nothing is held. Apologize and offer to connect the guest with a person.') }}"
+       }
+      ]
+     },
+     "options": {}
+    }
+   }
+  ],
+  "connections": {
+   "Tool Input": {
+    "main": [
+     [
+      {
+       "node": "Tenant Guard",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Tenant Guard": {
+    "main": [
+     [
+      {
+       "node": "Prepare",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Prepare": {
+    "main": [
+     [
+      {
+       "node": "Held?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Held?": {
+    "main": [
+     [
+      {
+       "node": "Calendar Check",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Return Problem",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Calendar Check": {
+    "main": [
+     [
+      {
+       "node": "Calendar Verdict",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Calendar Verdict": {
+    "main": [
+     [
+      {
+       "node": "Free?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Free?": {
+    "main": [
+     [
+      {
+       "node": "Return Summary",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Release Hold",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Release Hold": {
+    "main": [
+     [
+      {
+       "node": "Return Busy",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "callerPolicy": "workflowsFromSameOwner",
+   "saveDataErrorExecution": "all",
+   "saveDataSuccessExecution": "all",
+   "saveManualExecutions": true,
+   "saveExecutionProgress": true
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+   "name": null,
+   "description": null
+  }
+ }
+]

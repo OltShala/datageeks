@@ -1,0 +1,124 @@
+[
+ {
+  "updatedAt": "2026-10-01T07:47:21.000Z",
+  "createdAt": "2026-09-30T19:18:17.973Z",
+  "id": "rcpToolRooms0001",
+  "name": "Receply · Rooms (AI tool)",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+   {
+    "id": "ecd759bf-dde8-4364-9900-2e15b45758ad",
+    "name": "Tool Input",
+    "type": "n8n-nodes-base.executeWorkflowTrigger",
+    "typeVersion": 1.1,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "inputSource": "passthrough"
+    }
+   },
+   {
+    "id": "f116eeb2-31f0-4d13-bae8-5f0d2e10e70f",
+    "name": "Tenant Guard",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     220,
+     0
+    ],
+    "parameters": {
+     "jsCode": "// Tenant guard. \"Rooms tool\" is SHARED by every client, so it must be told whose data this is: the account\n// id from the conversation, or the calling workflow (the database maps it to its client). It never falls\n// back to a default: that is how a booking would land in the wrong hotel.\nconst inp = $input.first().json || {};\nlet d = inp;\nif (typeof inp.query === 'string') { try { d = JSON.parse(inp.query); } catch (e) { d = inp; } }\nelse if (inp.query && typeof inp.query === 'object') { d = inp.query; }\nconst acct = String(d.accountId ?? '').trim(), wf = String(d.workflowId ?? '').trim();\nif (!/^\\d+$/.test(acct) && !wf) throw new Error('Rooms tool was called without accountId or workflowId - refusing to guess whose data to use.');\nreturn [{ json: Object.assign({}, d, { accountId: acct, workflowId: wf }) }];"
+    }
+   },
+   {
+    "id": "24848f82-5b19-43f2-8cfd-f33a727b4ea2",
+    "name": "Query",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     440,
+     0
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT (jsonb_build_object('RoomNumber', room_number, 'RoomType', room_type, 'Persons', persons, 'Description', description) || extra) AS room\n  FROM receply_rooms WHERE account_id = receply_resolve_account($1::jsonb) AND active\n ORDER BY CASE WHEN room_number ~ '^\\d+$' THEN lpad(room_number, 12, '0') ELSE room_number END",
+     "options": {
+      "queryReplacement": "={{ [ JSON.stringify({ account_id: String($json.accountId || ''), workflow_id: String($json.workflowId || '') , ticket: String($json.ticket || ''), phone: String($json.phone || ''), email: String($json.email || '') }) ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueRegularOutput",
+    "alwaysOutputData": true
+   },
+   {
+    "id": "030d15c3-88f2-49ba-95d1-4ce988e5b579",
+    "name": "Answer",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     660,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const rows = $input.all().map((i) => i.json || {});\nif (rows.find((r) => r.error)) return [{ json: { message: 'The room list is unavailable right now. Do not guess rooms; offer to connect the guest with a person.' } }];\nconst rooms = rows.map((r) => r.room).filter(Boolean);\nreturn rooms.length ? rooms.map((r) => ({ json: r })) : [{ json: { message: 'No rooms are listed for this hotel yet. Do not invent rooms; offer to connect the guest with a person.' } }];"
+    }
+   }
+  ],
+  "connections": {
+   "Tool Input": {
+    "main": [
+     [
+      {
+       "node": "Tenant Guard",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Tenant Guard": {
+    "main": [
+     [
+      {
+       "node": "Query",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Query": {
+    "main": [
+     [
+      {
+       "node": "Answer",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+   "name": null,
+   "description": null
+  }
+ }
+]

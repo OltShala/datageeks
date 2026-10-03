@@ -1,0 +1,128 @@
+# Receply — LOCAL demo copy (runs entirely on this PC with Docker Desktop).
+#
+# Same images (pinned by digest), same service names and the same workflows as production on the VPS,
+# so everything behaves the same. Differences on purpose:
+#   * its own database with NO real guests (a demo hotel only), its own Chatwoot, its own secrets;
+#   * a test Google Sheet and test calendar — never the hotel's real ones;
+#   * no Cloudflare tunnel: nothing here is reachable from the internet (everything binds to 127.0.0.1);
+#   * n8n on http://localhost:5556 (5555 stays free for the SSH tunnel to production n8n);
+#   * a demo hotel website with the chat widget on http://localhost:8080.
+# Start/stop with scripts\start.ps1 / scripts\stop.ps1; first-time setup with scripts\setup.ps1.
+
+name: receply-local
+
+x-chatwoot-base: &base
+  # Chatwoot 4.16.2 — the exact build production runs
+  image: chatwoot/chatwoot@sha256:13ca92b8711a9fface0ed9f82e752d947b4ea690f39a554ad1e0b759f9cf7637
+  env_file: .env
+  volumes:
+    - chatwoot_storage:/app/storage
+  depends_on:
+    - postgres
+    - redis
+  networks: [receply]
+
+services:
+  rails:
+    <<: *base
+    ports:
+      - '127.0.0.1:3000:3000'
+    environment:
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+    entrypoint: docker/entrypoints/rails.sh
+    command: ['bundle', 'exec', 'rails', 's', '-p', '3000', '-b', '0.0.0.0']
+    restart: unless-stopped
+
+  sidekiq:
+    <<: *base
+    environment:
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+    command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
+    restart: unless-stopped
+
+  postgres:
+    # PostgreSQL 15.18 + pgvector — the exact build production runs
+    image: pgvector/pgvector@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:5433:5432'      # for DBeaver on this PC: localhost:5433 (no SSH tunnel needed)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=chatwoot_production
+      - POSTGRES_USER=chatwoot
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    networks: [receply]
+
+  redis:
+    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks: [receply]
+
+  n8n:
+    image: n8nio/n8n:2.32.7@sha256:882b126a8ddd0646e7d17ec47630e7704615e4647f3363471859fddc3f8946e2
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:5556:5678'
+    volumes:
+      - n8n_data:/home/node/.n8n
+    environment:
+      # Same key as production, so the copied credentials (OpenAI, Google, Gmail, Resend) work here.
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_EDITOR_BASE_URL=http://localhost:5556
+      - WEBHOOK_URL=http://localhost:5556
+      - N8N_SECURE_COOKIE=false
+      - N8N_DEFAULT_BINARY_DATA_MODE=filesystem
+      - N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true
+      - GENERIC_TIMEZONE=Europe/Belgrade
+      - TZ=Europe/Belgrade
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=10000
+      - DB_SQLITE_VACUUM_ON_STARTUP=true
+    depends_on:
+      - postgres
+    networks: [receply]
+
+  website:
+    # The demo hotel's website with the Receply chat widget — OFF for now (WhatsApp only). To bring it back:
+    #   $env:WITH_WEBSITE='1'; .\scripts\setup.ps1      (creates the chat inbox again and starts this)
+    image: nginx:1.27-alpine
+    profiles: [website]
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8080:80'
+    volumes:
+      - ./demo-site:/usr/share/nginx/html:ro
+    networks: [receply]
+
+  cloudflared:
+    # WhatsApp only (scripts\whatsapp-local.ps1 starts it): demo.receply.net -> this Chatwoot, and ONLY the path
+    # /webhooks/whatsapp/ (cloudflared\config.yml); everything else answers 404. Not started by a plain `up -d`.
+    image: cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf
+    profiles: [whatsapp]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./secrets/cloudflared:/etc/cloudflared/creds:ro
+    depends_on:
+      - rails
+    networks: [receply]
+
+volumes:
+  chatwoot_storage:
+  postgres_data:
+  redis_data:
+  n8n_data:
+
+networks:
+  receply:
+    driver: bridge

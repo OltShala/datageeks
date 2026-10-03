@@ -1,0 +1,8 @@
+# Receply LOCAL - tunnel for WhatsApp only: demo.receply.net -> local Chatwoot, ONLY the WhatsApp webhook path.
+tunnel: e021c1f1-abb7-4dfd-ae12-7e0e3d1503fe
+credentials-file: /etc/cloudflared/creds/e021c1f1-abb7-4dfd-ae12-7e0e3d1503fe.json
+ingress:
+  - hostname: demo.receply.net
+    path: ^/webhooks/whatsapp/
+    service: http://rails:3000
+  - service: http_status:404

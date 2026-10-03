@@ -1,0 +1,487 @@
+[
+ {
+  "updatedAt": "2026-10-01T07:47:35.000Z",
+  "createdAt": "2026-09-23T19:49:23.202Z",
+  "id": "rcpReminderPlan1",
+  "name": "Receply — Reminder Planner",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+   {
+    "name": "Every Hour",
+    "type": "n8n-nodes-base.scheduleTrigger",
+    "typeVersion": 1.2,
+    "position": [
+     0,
+     -120
+    ],
+    "id": "rp-sched",
+    "parameters": {
+     "rule": {
+      "interval": [
+       {
+        "field": "hours",
+        "hoursInterval": 1,
+        "triggerAtMinute": 50
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "Run Manually",
+    "type": "n8n-nodes-base.manualTrigger",
+    "typeVersion": 1,
+    "position": [
+     0,
+     120
+    ],
+    "id": "rp-manual",
+    "parameters": {}
+   },
+   {
+    "name": "Config",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     220,
+     0
+    ],
+    "id": "rp-config",
+    "parameters": {
+     "jsCode": "// dryRun: plan and show, write nothing. daysAhead 1 = tomorrow.\nreturn [{ json: { dryRun: false, daysAhead: 1, windowDays: 1 } }];"
+    }
+   },
+   {
+    "name": "Clients",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     440,
+     0
+    ],
+    "id": "rp-clients",
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {},
+     "query": "SELECT account_id, business_name, sheet_id, calendar_id, timezone FROM receply_clients ORDER BY account_id"
+    }
+   },
+   {
+    "name": "Each Client",
+    "type": "n8n-nodes-base.splitInBatches",
+    "typeVersion": 3,
+    "position": [
+     660,
+     0
+    ],
+    "id": "rp-loop",
+    "parameters": {
+     "batchSize": 1,
+     "options": {}
+    }
+   },
+   {
+    "name": "Window",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     880,
+     0
+    ],
+    "id": "rp-window",
+    "parameters": {
+     "jsCode": "// Tomorrow, in the CLIENT's timezone — a hotel in another country must not get Belgrade's \"tomorrow\".\nconst cfg = $('Config').first().json;\nconst c = $input.first().json;\nconst tz = c.timezone || 'Europe/Belgrade';\nconst start = DateTime.now().setZone(tz).plus({ days: cfg.daysAhead }).startOf('day');\nreturn [{ json: Object.assign({}, c, { tz, dryRun: !!cfg.dryRun,\n  timeMin: start.toISO(), timeMax: start.plus({ days: cfg.windowDays }).toISO() }) }];"
+    }
+   },
+   {
+    "name": "Tomorrows Events",
+    "type": "n8n-nodes-base.googleCalendar",
+    "typeVersion": 1.3,
+    "position": [
+     1100,
+     0
+    ],
+    "id": "rp-events",
+    "credentials": {
+     "googleCalendarOAuth2Api": {
+      "id": "8wAB0uxntdU6yfvs",
+      "name": "Google Calendar account"
+     }
+    },
+    "onError": "continueRegularOutput",
+    "alwaysOutputData": true,
+    "parameters": {
+     "resource": "event",
+     "operation": "getAll",
+     "returnAll": true,
+     "calendar": {
+      "__rl": true,
+      "mode": "id",
+      "value": "={{ $json.calendar_id }}"
+     },
+     "timeMin": "={{ $json.timeMin }}",
+     "timeMax": "={{ $json.timeMax }}",
+     "options": {}
+    }
+   },
+   {
+    "id": "rp-rows",
+    "name": "Guest Rows",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     1320,
+     0
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT r.calendar_event_id AS \"EventID\", coalesce(g.first_name, '') AS \"Name\", coalesce(g.phone, '') AS \"PhoneNumber\", coalesce(r.room_number, '') AS \"RoomNumber\"\n  FROM receply_reservations r LEFT JOIN receply_guests g ON g.id = r.guest_id\n WHERE r.account_id = $1::int AND r.status = 'confirmed' AND r.calendar_event_id IS NOT NULL\n   AND r.check_in BETWEEN current_date - 2 AND current_date + 7",
+     "options": {
+      "queryReplacement": "={{ [ String($('Window').first().json.account_id) ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueRegularOutput",
+    "alwaysOutputData": true,
+    "executeOnce": true
+   },
+   {
+    "name": "Booking Links",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     1540,
+     0
+    ],
+    "id": "rp-links",
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueRegularOutput",
+    "alwaysOutputData": true,
+    "executeOnce": true,
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT calendar_event_id AS event_id, conversation_id, whatsapp_phone FROM receply_reservations\n WHERE account_id = $1::int AND calendar_event_id IS NOT NULL AND (conversation_id IS NOT NULL OR whatsapp_phone IS NOT NULL)",
+     "options": {
+      "queryReplacement": "={{ [ String($('Window').first().json.account_id) ] }}"
+     }
+    }
+   },
+   {
+    "name": "Match",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     1760,
+     0
+    ],
+    "id": "rp-match",
+    "parameters": {
+     "jsCode": "// Join tomorrow's calendar events to guest rows by EventID. Output is EITHER one alert item\n// OR queue items (never both), so exactly one branch reaches the loop again.\nconst client = $('Window').first().json;\nconst evs  = $('Tomorrows Events').all().map(i => i.json || {});\nconst rows = $('Guest Rows').all().map(i => i.json || {});\nconst failed = evs.find(j => j.error) ? 'the calendar' : (rows.find(j => j.error) ? 'the reservations database' : null);\nif (failed) {\n  const err = (evs.concat(rows).find(j => j.error) || {}).error;\n  return [{ json: { alert: true, account_id: client.account_id,\n    message: 'Reminder planner could not read ' + failed + ' for ' + (client.business_name || ('account ' + client.account_id)) +\n             '. Reminders for this hotel are not being queued. Error: ' + String((err && err.message) || err).slice(0, 200) } }];\n}\nconst byEvent = new Map(rows.filter(r => r.EventID).map(r => [String(r.EventID).trim(), r]));\n// The conversation the guest booked FROM beats the phone they typed (often local-format or a\n// different number). Links exist for bookings made after 2026-09-24 via WhatsApp.\nconst links = new Map($('Booking Links').all().map(i => i.json || {}).filter(l => l.event_id).map(l => [l.event_id, l]));\nconst out = [];\nfor (const e of evs) {\n  if (!e.id || !e.start || e.status === 'cancelled') continue;          // alwaysOutputData gives {} when empty\n  const r = byEvent.get(e.id), link = links.get(e.id) || {};\n  const phone = String(link.whatsapp_phone || (r && r.PhoneNumber) || '').trim();\n  const conv = link.conversation_id ? String(link.conversation_id) : '';\n  out.push({ json: {\n    alert: false, doInsert: !client.dryRun, account_id: client.account_id, kind: 'prearrival', event_id: e.id,\n    guest_name: r ? String(r.Name || '').trim() : '', guest_phone: phone, room: r ? String(r.RoomNumber || '').trim() : '',\n    conversation_id: conv,\n    checkin_at: e.start.dateTime || (e.start.date + 'T00:00:00Z'),\n    status: (phone || conv) ? 'pending' : 'skipped',\n    detail: (!r && !conv) ? 'calendar event has no row in the guest sheet (added by hand?)'\n          : ((phone || conv) ? (conv ? 'from booking conversation' : 'typed phone only (no booking conversation recorded)') : 'booking has no phone number'),\n    summary: e.summary || '' } });\n}\nif (!out.length) out.push({ json: { alert: false, doInsert: false, noop: true, account_id: client.account_id,\n  kind: 'prearrival', event_id: '', checkin_at: new Date().toISOString(), status: 'skipped' } });\nreturn out;"
+    }
+   },
+   {
+    "name": "Alert?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     1980,
+     0
+    ],
+    "id": "rp-alert-if",
+    "parameters": {
+     "options": {},
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose",
+       "version": 2
+      },
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "a1",
+        "leftValue": "={{ $json.alert }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "Alert Owner (ntfy)",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     2200,
+     -160
+    ],
+    "id": "rp-ntfy",
+    "onError": "continueRegularOutput",
+    "parameters": {
+     "method": "POST",
+     "url": "https://ntfy.sh",
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ topic: '__RL_TOPIC__', title: 'Receply - reminders not queued', message: $json.message, priority: 4, tags: ['warning'] }) }}",
+     "options": {
+      "timeout": 10000
+     }
+    }
+   },
+   {
+    "name": "Queue",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     2200,
+     120
+    ],
+    "id": "rp-queue",
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "alwaysOutputData": true,
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "INSERT INTO receply_reminders (account_id, kind, event_id, guest_name, guest_phone, room, checkin_at, status, detail, conversation_id)\nSELECT $1::int, $2, $3, NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7::timestamptz, $8, NULLIF($9, ''), NULLIF($11, '')::int\n WHERE $10::boolean\nON CONFLICT (account_id, kind, event_id) DO NOTHING",
+     "options": {
+      "queryReplacement": "={{ [ $json.account_id, $json.kind, $json.event_id, $json.guest_name || '', $json.guest_phone || '', $json.room || '', $json.checkin_at, $json.status, $json.detail || '', !!$json.doInsert, $json.conversation_id || '' ] }}"
+     }
+    }
+   },
+   {
+    "name": "Rejoin",
+    "type": "n8n-nodes-base.noOp",
+    "typeVersion": 1,
+    "position": [
+     2420,
+     0
+    ],
+    "id": "rp-rejoin",
+    "parameters": {}
+   },
+   {
+    "name": "Done",
+    "type": "n8n-nodes-base.noOp",
+    "typeVersion": 1,
+    "position": [
+     660,
+     -200
+    ],
+    "id": "rp-done",
+    "parameters": {}
+   }
+  ],
+  "connections": {
+   "Every Hour": {
+    "main": [
+     [
+      {
+       "node": "Config",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Run Manually": {
+    "main": [
+     [
+      {
+       "node": "Config",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Config": {
+    "main": [
+     [
+      {
+       "node": "Clients",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Clients": {
+    "main": [
+     [
+      {
+       "node": "Each Client",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Each Client": {
+    "main": [
+     [
+      {
+       "node": "Done",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Window",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Window": {
+    "main": [
+     [
+      {
+       "node": "Tomorrows Events",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Tomorrows Events": {
+    "main": [
+     [
+      {
+       "node": "Guest Rows",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Guest Rows": {
+    "main": [
+     [
+      {
+       "node": "Booking Links",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Booking Links": {
+    "main": [
+     [
+      {
+       "node": "Match",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Match": {
+    "main": [
+     [
+      {
+       "node": "Alert?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Alert?": {
+    "main": [
+     [
+      {
+       "node": "Alert Owner (ntfy)",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Queue",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Alert Owner (ntfy)": {
+    "main": [
+     [
+      {
+       "node": "Rejoin",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Queue": {
+    "main": [
+     [
+      {
+       "node": "Rejoin",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Rejoin": {
+    "main": [
+     [
+      {
+       "node": "Each Client",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "timezone": "Europe/Belgrade",
+   "saveDataSuccessExecution": "all",
+   "saveDataErrorExecution": "all"
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+   "name": null,
+   "description": null
+  }
+ }
+]

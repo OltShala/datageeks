@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Receply Demo Hotel</title>
+<style>
+  :root { --ink: #1d2a30; --muted: #5b6b72; --accent: #1f4e5f; --sand: #f4efe6; --card: #ffffff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Georgia, 'Times New Roman', serif; color: var(--ink); background: var(--sand); }
+  header { padding: 18px 6vw; display: flex; justify-content: space-between; align-items: center; }
+  header b { font-size: 20px; letter-spacing: .5px; }
+  header span { font-family: system-ui, sans-serif; font-size: 13px; color: var(--muted); }
+  .hero { padding: 9vh 6vw 7vh; background: linear-gradient(rgba(29,42,48,.55), rgba(29,42,48,.55)), #3e5c66; color: #fff; }
+  .hero h1 { font-size: clamp(32px, 5vw, 56px); margin: 0 0 12px; font-weight: 400; }
+  .hero p { font-family: system-ui, sans-serif; font-size: 18px; max-width: 560px; line-height: 1.5; margin: 0; }
+  .rooms { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; padding: 6vh 6vw; }
+  .room { background: var(--card); border-radius: 12px; padding: 20px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .room h3 { margin: 0 0 6px; font-weight: 400; }
+  .room p { font-family: system-ui, sans-serif; color: var(--muted); margin: 0; font-size: 14px; line-height: 1.5; }
+  footer { font-family: system-ui, sans-serif; font-size: 13px; color: var(--muted); padding: 24px 6vw 40px; }
+</style>
+</head>
+<body>
+<header><b>Receply Demo Hotel</b><span>Local demo · the chat (bottom right) is the AI receptionist</span></header>
+<section class="hero">
+  <h1>Stay in the heart of the city</h1>
+  <p>Ask our receptionist anything in Albanian, Serbian or English: free rooms, prices, check-in times, or book a room in a minute, day or night.</p>
+</section>
+<section class="rooms">
+  <div class="room"><h3>Normal rooms</h3><p>Queen or twin beds, city or garden view. For 1–3 guests.</p></div>
+  <div class="room"><h3>Suites</h3><p>Living area, spa bath or workspace. For 2–4 guests.</p></div>
+  <div class="room"><h3>Family room</h3><p>One double and one single bed. For up to 3 guests.</p></div>
+</section>
+<footer>This page only exists on this computer (http://localhost:8080). Bookings made here go to the local demo database and a test calendar.</footer>
+<script>
+  (function (d, t) {
+    var BASE_URL = 'http://localhost:3000';
+    var g = d.createElement(t), s = d.getElementsByTagName(t)[0];
+    g.src = BASE_URL + '/packs/js/sdk.js'; g.defer = true; g.async = true;
+    s.parentNode.insertBefore(g, s);
+    g.onload = function () { window.chatwootSDK.run({ websiteToken: '__RL_WEBSITE_TOKEN__', baseUrl: BASE_URL }); };
+  })(document, 'script');
+</script>
+</body>
+</html>

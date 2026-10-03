@@ -1,0 +1,421 @@
+[
+ {
+  "updatedAt": "2026-10-01T07:47:28.000Z",
+  "createdAt": "2026-09-27T20:11:47.029Z",
+  "id": "rcpModDeliver001",
+  "name": "Receply · Deliver Reply (shared module)",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+   {
+    "id": "ac0dbcf9-d5f1-475a-87f1-38c588787b09",
+    "name": "Reply In",
+    "type": "n8n-nodes-base.executeWorkflowTrigger",
+    "typeVersion": 1.1,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "workflowInputs": {
+      "values": [
+       {
+        "name": "accountId",
+        "type": "any"
+       },
+       {
+        "name": "cwToken",
+        "type": "any"
+       },
+       {
+        "name": "conversationId",
+        "type": "any"
+       },
+       {
+        "name": "senderPhone",
+        "type": "any"
+       },
+       {
+        "name": "senderName",
+        "type": "any"
+       },
+       {
+        "name": "source",
+        "type": "any"
+       },
+       {
+        "name": "chatInput",
+        "type": "any"
+       },
+       {
+        "name": "customerMessage",
+        "type": "any"
+       },
+       {
+        "name": "output",
+        "type": "any"
+       },
+       {
+        "name": "error",
+        "type": "any"
+       },
+       {
+        "name": "alertTopic",
+        "type": "any"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "output-field",
+        "name": "output",
+        "type": "string",
+        "value": "={{ (function(){ var o = $json.output; if (o && String(o).trim() !== '') return o; var src = $('Reply In').first().json.customerMessage; var t = ' ' + String(src||'').toLowerCase().replace(/[^a-zëçčćžšđ]+/g,' ') + ' '; var sqw=['dua','nuk','jam','një','nje','mirë','mire','dhomë','dhome','dhoma','rezervim','njeri','njeriu','ndihmë','ndihme','faleminderit','përshëndetje','pershendetje','ju','keni','kam','çmim','cmim','menaxher','flas','për','per','tani','lutem']; var mew=['hvala','molim','zdravo','želim','zelim','soba','sobu','rezervacija','čovjek','covjek','pomoć','pomoc','treba','imate','koliko','cijena','hoću','hocu','sada']; var hasSq=/[ëç]/.test(t)||sqw.some(function(w){return t.indexOf(' '+w+' ')>-1;}); var hasMe=/[čćžšđ]/.test(t)||mew.some(function(w){return t.indexOf(' '+w+' ')>-1;}); return hasSq ? 'Më vjen keq, po has një problem teknik për momentin. Ju lutem provoni përsëri pas pak minutash, ose na kontaktoni direkt. Faleminderit për mirëkuptimin! 🙏' : (hasMe ? 'Izvinjavam se, trenutno imam tehnički problem. Molim vas pokušajte ponovo za nekoliko minuta, ili nas kontaktirajte direktno. Hvala na razumijevanju! 🙏' : 'Sorry — I am having a technical problem right now. Please try again in a few minutes, or contact us directly. Thank you for your patience! 🙏'); })() }}"
+       },
+       {
+        "id": "source-field",
+        "name": "source",
+        "type": "string",
+        "value": "={{ $('Reply In').first().json.source }}"
+       },
+       {
+        "id": "sender-phone-field",
+        "name": "senderPhone",
+        "type": "string",
+        "value": "={{ $('Reply In').first().json.senderPhone }}"
+       },
+       {
+        "id": "customer-message-field",
+        "name": "customerMessage",
+        "type": "string",
+        "value": "={{ $('Reply In').first().json.customerMessage }}"
+       },
+       {
+        "id": "is-error-field",
+        "name": "isError",
+        "type": "boolean",
+        "value": "={{ !!$('Reply In').first().json.error }}"
+       }
+      ]
+     },
+     "options": {}
+    },
+    "id": "ee0bf5f4-d447-47af-a1d9-7d5d38614e77",
+    "name": "Combine Output",
+    "position": [
+     220,
+     0
+    ],
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4
+   },
+   {
+    "id": "02a8a40c-c626-4ad6-a17c-cb1043c8a81a",
+    "name": "Split For Channel",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     460,
+     -140
+    ],
+    "parameters": {
+     "jsCode": "// A reply longer than the channel allows (Instagram: 1000 characters) would be rejected by the\n// channel after Chatwoot accepted it - a silent failure. Split on paragraph, then sentence, then word.\nconst LIMITS = {\"instagram\":1000,\"messenger\":2000,\"tiktok\":1000,\"sms\":1600,\"telegram\":4096,\"whatsapp\":4096,\"line\":5000};\nconst limit = LIMITS[$('Reply In').first().json.source] || 4096;\nlet rest = String($input.first().json.output || '').trim();\nconst parts = [];\nwhile (rest.length > limit) {\n  const win = rest.slice(0, limit);\n  let cut = win.lastIndexOf('\\n\\n');\n  if (cut < limit * 0.5) cut = Math.max(win.lastIndexOf('. '), win.lastIndexOf('! '), win.lastIndexOf('? '), win.lastIndexOf('\\n')) + 1;\n  if (cut < limit * 0.5) cut = win.lastIndexOf(' ');\n  if (cut <= 0) cut = limit;\n  parts.push(rest.slice(0, cut).trim());\n  rest = rest.slice(cut).trim();\n}\nif (rest || !parts.length) parts.push(rest);\nreturn parts.map((chunk, index) => ({ json: { chunk, index, parts: parts.length } }));"
+    }
+   },
+   {
+    "parameters": {
+     "method": "POST",
+     "url": "={{ 'http://rails:3000/api/v1/accounts/' + $('Reply In').first().json.accountId + '/conversations/' + $('Reply In').first().json.conversationId + '/messages' }}",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "api_access_token",
+        "value": "={{ $('Reply In').first().json.cwToken }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ content: $json.chunk, message_type: 'outgoing', private: false }) }}",
+     "options": {
+      "batching": {
+       "batch": {
+        "batchSize": 1,
+        "batchInterval": 400
+       }
+      }
+     }
+    },
+    "id": "4a05a6e0-789a-4bd0-a54a-87539a0ec174",
+    "name": "Send via Chatwoot",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     680,
+     -140
+    ],
+    "retryOnFail": true,
+    "maxTries": 3,
+    "waitBetweenTries": 1500,
+    "alwaysOutputData": true,
+    "onError": "continueErrorOutput"
+   },
+   {
+    "parameters": {
+     "sendTo": "oltshala@gmail.com",
+     "subject": "=[AI Receptionist] Workflow error - owner action needed",
+     "emailType": "text",
+     "message": "=The AI Receptionist workflow hit an error and could not deliver a response.\n\nTime: {{ $now.toISO() }}\nNode: {{ ($json.error && $json.error.node && $json.error.node.name) || 'unknown' }}\nMessage: {{ ($json.error && $json.error.message) || $json.message || 'no error message' }}\n\nCustomer phone (if available): {{ $('Reply In').isExecuted ? $('Reply In').first().json.senderPhone : '' }}\nLast customer message: {{ $('Reply In').isExecuted ? $('Reply In').first().json.chatInput : '' }}\n\nPlease open Chatwoot and take over the conversation.",
+     "options": {}
+    },
+    "id": "5221d459-3e63-4c31-b0b7-441528a9885c",
+    "name": "Owner Error Alert",
+    "type": "n8n-nodes-base.gmail",
+    "typeVersion": 2.1,
+    "position": [
+     920,
+     -60
+    ],
+    "webhookId": "5d29374c-ed27-4b22-bb8b-880ef369f1fe",
+    "credentials": {
+     "gmailOAuth2": {
+      "id": "xarPi1lV9VP6DBEl",
+      "name": "Gmail account"
+     }
+    }
+   },
+   {
+    "id": "log-conversation-node",
+    "name": "Log Conversation",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     460,
+     40
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "INSERT INTO receply_message_log (account_id, conversation_id, channel, sender_phone, customer_message, ai_response, is_error)\nVALUES (CASE WHEN $1 ~ '^\\d+$' THEN $1::int END, CASE WHEN $2 ~ '^\\d+$' THEN $2::int END, NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7::boolean)",
+     "options": {
+      "queryReplacement": "={{ [ String($('Reply In').first().json.accountId ?? ''), String($('Reply In').first().json.conversationId ?? ''), String($json.source || ''), String($json.senderPhone || ''), String($json.customerMessage || ''), String($json.output || ''), $json.isError ? 'true' : 'false' ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "check-fallback-flag",
+    "name": "Check Fallback Flag",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.3,
+    "position": [
+     460,
+     220
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "version": 2,
+       "leftValue": "",
+       "caseSensitive": true,
+       "typeValidation": "loose"
+      },
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "err1",
+        "leftValue": "={{ $json.isError }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       },
+       {
+        "id": "err2",
+        "leftValue": "={{ $('Reply In').isExecuted }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "ai-fail-note",
+    "name": "AI Failure Note (Chatwoot)",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     680,
+     220
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "={{ 'http://rails:3000/api/v1/accounts/' + $('Reply In').first().json.accountId + '/conversations/' + $('Reply In').first().json.conversationId + '/messages' }}",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "api_access_token",
+        "value": "={{ $('Reply In').first().json.cwToken }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ content: '⚠️ AI FAILURE — the assistant could not generate a reply and the customer received the fallback message.\\n\\nCustomer said: \"' + ($json.customerMessage || '') + '\"\\n\\nPlease take over this conversation, then check the n8n execution log.', message_type: 'outgoing', private: true }) }}",
+     "options": {}
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "ai-fail-push",
+    "name": "AI Failure Push (ntfy)",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     900,
+     220
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://ntfy.sh",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ topic: ($('Reply In').first().json.alertTopic || '__RL_TOPIC__'), title: 'Receply - AI FAILED to reply', message: '⚠️ The AI could not answer \"' + ($json.customerMessage || '') + '\". The customer got the fallback message. Tap to open the conversation.', priority: 5, tags: ['warning','robot'], click: 'http://localhost:3000/app/accounts/' + $('Reply In').first().json.accountId + '/conversations/' + $('Reply In').first().json.conversationId }) }}",
+     "options": {
+      "timeout": 10000
+     }
+    },
+    "onError": "continueRegularOutput"
+   }
+  ],
+  "connections": {
+   "Reply In": {
+    "main": [
+     [
+      {
+       "node": "Combine Output",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Combine Output": {
+    "main": [
+     [
+      {
+       "node": "Split For Channel",
+       "type": "main",
+       "index": 0
+      },
+      {
+       "node": "Log Conversation",
+       "type": "main",
+       "index": 0
+      },
+      {
+       "node": "Check Fallback Flag",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Split For Channel": {
+    "main": [
+     [
+      {
+       "node": "Send via Chatwoot",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Send via Chatwoot": {
+    "main": [
+     [],
+     [
+      {
+       "node": "Owner Error Alert",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check Fallback Flag": {
+    "main": [
+     [
+      {
+       "node": "AI Failure Note (Chatwoot)",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "AI Failure Note (Chatwoot)": {
+    "main": [
+     [
+      {
+       "node": "AI Failure Push (ntfy)",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionCounter": 3,
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+   "name": null,
+   "description": null
+  }
+ }
+]

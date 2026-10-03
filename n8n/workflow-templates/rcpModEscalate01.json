@@ -1,0 +1,350 @@
+[
+ {
+  "updatedAt": "2026-09-27T20:18:54.000Z",
+  "createdAt": "2026-09-27T20:11:50.789Z",
+  "id": "rcpModEscalate01",
+  "name": "Receply · Escalate (shared module)",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+   {
+    "id": "14dc3354-6dc4-40db-8ad8-76f44a4fad75",
+    "name": "Escalation In",
+    "type": "n8n-nodes-base.executeWorkflowTrigger",
+    "typeVersion": 1.1,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "workflowInputs": {
+      "values": [
+       {
+        "name": "accountId",
+        "type": "any"
+       },
+       {
+        "name": "cwToken",
+        "type": "any"
+       },
+       {
+        "name": "conversationId",
+        "type": "any"
+       },
+       {
+        "name": "senderName",
+        "type": "any"
+       },
+       {
+        "name": "senderPhone",
+        "type": "any"
+       },
+       {
+        "name": "chatInput",
+        "type": "any"
+       },
+       {
+        "name": "reason",
+        "type": "any"
+       },
+       {
+        "name": "trigger",
+        "type": "any"
+       },
+       {
+        "name": "postGuestMessage",
+        "type": "any"
+       },
+       {
+        "name": "isOpen",
+        "type": "any"
+       },
+       {
+        "name": "officeOpen",
+        "type": "any"
+       },
+       {
+        "name": "ownerEmail",
+        "type": "any"
+       },
+       {
+        "name": "alertTopic",
+        "type": "any"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "parameters": {
+     "method": "POST",
+     "url": "={{ 'http://rails:3000/api/v1/accounts/' + $('Escalation In').first().json.accountId + '/conversations/' + $('Escalation In').first().json.conversationId + '/custom_attributes' }}",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "api_access_token",
+        "value": "={{ $('Escalation In').first().json.cwToken }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ custom_attributes: Object.assign({ bot_active: false, bot_paused_until: $now.plus({ hours: 12 }).toISO(), paused_by: $('Escalation In').first().json.trigger === 'ai' ? 'ai_judgment' : 'keyword_escalation', paused_at: $now.toISO() }, $('Escalation In').first().json.trigger === 'ai' ? { escalation_reason: $('Escalation In').first().json.reason || 'AI requested human help' } : {}) }) }}",
+     "options": {}
+    },
+    "id": "3e743a3e-50f4-4dcf-9c75-b141249aed45",
+    "name": "Pause Bot For Escalation",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     220,
+     0
+    ],
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "d0ecf9c7-951a-49bb-9c53-586069c550e7",
+    "name": "Tell Guest?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     440,
+     0
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose",
+       "version": 2
+      },
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "04aa1903-0fcd-4e17-86ba-4232a4d68927",
+        "leftValue": "={{ $('Escalation In').first().json.postGuestMessage === true }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "parameters": {
+     "method": "POST",
+     "url": "={{ 'http://rails:3000/api/v1/accounts/' + $('Escalation In').first().json.accountId + '/conversations/' + $('Escalation In').first().json.conversationId + '/messages' }}",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "api_access_token",
+        "value": "={{ $('Escalation In').first().json.cwToken }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ (function(){ var src = $('Escalation In').first().json.chatInput || ''; var t = ' ' + String(src).toLowerCase().replace(/[^a-zëçčćžšđ]+/g,' ') + ' '; var sqw=['dua','nuk','jam','një','nje','mirë','mire','dhomë','dhome','dhoma','rezervim','njeri','njeriu','ndihmë','ndihme','faleminderit','përshëndetje','pershendetje','ju','keni','kam','çmim','cmim','menaxher','flas','për','per','tani','lutem']; var mew=['hvala','molim','zdravo','želim','zelim','soba','sobu','rezervacija','čovjek','covjek','pomoć','pomoc','treba','imate','koliko','cijena','hoću','hocu','sada']; var hasSq=/[ëç]/.test(t)||sqw.some(function(w){return t.indexOf(' '+w+' ')>-1;}); var hasMe=/[čćžšđ]/.test(t)||mew.some(function(w){return t.indexOf(' '+w+' ')>-1;}); /* RECEPLY_HOURS_AWARE */ var st = $('Escalation In').first().json; var away = st.isOpen === false; var back = st.officeOpen || ''; var tail = !away ? '' : (hasSq ? (' Ekipi nuk eshte online tani — kthehen ne oren ' + back + '.') : (hasMe ? (' Tim trenutno nije dostupan — vracaju se u ' + back + '.') : (' The team is not online right now — they are back at ' + back + '.'))); var msg = hasSq ? 'Po ju lidh me një anëtar të ekipit tonë — një moment, ju lutem. 🙏' : (hasMe ? 'Povezujem vas sa članom našeg tima — samo trenutak, molim vas. 🙏' : 'Connecting you with a member of our team — one moment, please. 🙏'); return JSON.stringify({ content: msg + tail, message_type: 'outgoing', private: false }); })() }}",
+     "options": {}
+    },
+    "id": "c05d61a8-a9ba-4a97-a74f-fbb4788b891b",
+    "name": "Escalation Transparency Msg",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     680,
+     -120
+    ],
+    "onError": "continueRegularOutput"
+   },
+   {
+    "parameters": {
+     "method": "POST",
+     "url": "https://ntfy.sh",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ topic: $('Escalation In').first().json.alertTopic || '__RL_TOPIC__', title: $('Escalation In').first().json.trigger === 'ai' ? 'Receply - the AI asked for you' : 'Receply - customer needs you', message: '🔔 ' + ($('Escalation In').first().json.senderName || 'A customer') + ' needs you' + ($('Escalation In').first().json.trigger === 'ai' ? (' (the AI escalated: ' + ($('Escalation In').first().json.reason || 'no reason given') + ')') : '') + ': \"' + ($('Escalation In').first().json.chatInput || '') + '\". Tap to open the conversation in Chatwoot.', priority: 5, tags: ['bell','rotating_light'], click: ($('Escalation In').first().json.accountId && $('Escalation In').first().json.conversationId) ? ('http://localhost:3000/app/accounts/' + $('Escalation In').first().json.accountId + '/conversations/' + $('Escalation In').first().json.conversationId) : 'http://localhost:3000' }) }}",
+     "options": {
+      "timeout": 10000
+     }
+    },
+    "id": "owner-instant-push-ntfy",
+    "name": "Owner Instant Push (ntfy)",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     920,
+     0
+    ],
+    "onError": "continueRegularOutput"
+   },
+   {
+    "parameters": {
+     "sendTo": "={{ [$('Escalation In').first().json.ownerEmail, 'oltshala@gmail.com'].filter((v, i, a) => v && a.indexOf(v) === i).join(',') }}",
+     "subject": "={{ $('Escalation In').first().json.trigger === 'ai' ? '[AI Receptionist] AI escalated a conversation - human needed' : 'ESCALATION - Customer requesting human agent' }}",
+     "emailType": "text",
+     "message": "={{ $('Escalation In').first().json.trigger === 'ai' ? 'The AI decided it needs a human for this conversation.' : 'A customer has triggered an escalation keyword and is requesting a human agent.' }}\n\nReason: {{ $('Escalation In').first().json.reason || 'not specified' }}\nCustomer: {{ $('Escalation In').first().json.senderName || '' }} {{ $('Escalation In').first().json.senderPhone || '' }}\nMessage: \"{{ $('Escalation In').first().json.chatInput || '' }}\"\nTime: {{ $now.toISO() }}\n\nOpen the conversation: {{ ($('Escalation In').first().json.accountId && $('Escalation In').first().json.conversationId) ? ('http://localhost:3000/app/accounts/' + $('Escalation In').first().json.accountId + '/conversations/' + $('Escalation In').first().json.conversationId) : 'http://localhost:3000 (conversation unknown)' }}\n\nThe AI is paused for this conversation. It resumes when you mark the conversation Resolved.",
+     "options": {}
+    },
+    "id": "escalation-owner-email",
+    "name": "Escalation Owner Email",
+    "type": "n8n-nodes-base.gmail",
+    "typeVersion": 2.2,
+    "position": [
+     1140,
+     0
+    ],
+    "webhookId": "d6f10271-3691-453a-a6f8-6b9d576ded76",
+    "credentials": {
+     "gmailOAuth2": {
+      "id": "xarPi1lV9VP6DBEl",
+      "name": "Gmail account"
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "86a59422-11ca-4ca5-b1fb-a3e6b470c086",
+    "name": "Escalated",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     1360,
+     0
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "4559f4f6-70e0-4460-bd34-d77b199e39ad",
+        "name": "action",
+        "type": "string",
+        "value": "escalated"
+       },
+       {
+        "id": "048f70ab-245a-443e-8e8b-4cac6de9c8f8",
+        "name": "result",
+        "type": "string",
+        "value": "Escalation complete. A human team member has been notified and the bot is paused for this conversation. Tell the customer, in their language, that you are connecting them with a member of the team who will reply shortly. Do not attempt to resolve the issue yourself."
+       }
+      ]
+     },
+     "options": {}
+    }
+   }
+  ],
+  "connections": {
+   "Escalation In": {
+    "main": [
+     [
+      {
+       "node": "Pause Bot For Escalation",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Pause Bot For Escalation": {
+    "main": [
+     [
+      {
+       "node": "Tell Guest?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Tell Guest?": {
+    "main": [
+     [
+      {
+       "node": "Escalation Transparency Msg",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Owner Instant Push (ntfy)",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Escalation Transparency Msg": {
+    "main": [
+     [
+      {
+       "node": "Owner Instant Push (ntfy)",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Owner Instant Push (ntfy)": {
+    "main": [
+     [
+      {
+       "node": "Escalation Owner Email",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Escalation Owner Email": {
+    "main": [
+     [
+      {
+       "node": "Escalated",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+   "name": null,
+   "description": null
+  }
+ }
+]

@@ -1,0 +1,124 @@
+[
+ {
+  "updatedAt": "2026-10-01T07:47:24.000Z",
+  "createdAt": "2026-09-30T19:18:25.347Z",
+  "id": "rcpToolFindRes01",
+  "name": "Receply · Find Reservations (AI tool)",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+   {
+    "id": "95bccc63-b079-4122-b1c3-a2b92cb3df41",
+    "name": "Tool Input",
+    "type": "n8n-nodes-base.executeWorkflowTrigger",
+    "typeVersion": 1.1,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "inputSource": "passthrough"
+    }
+   },
+   {
+    "id": "be48c347-e7af-477c-8e5f-8b463ee03ff5",
+    "name": "Tenant Guard",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     220,
+     0
+    ],
+    "parameters": {
+     "jsCode": "// Tenant guard. \"Find Reservations tool\" is SHARED by every client, so it must be told whose data this is: the account\n// id from the conversation, or the calling workflow (the database maps it to its client). It never falls\n// back to a default: that is how a booking would land in the wrong hotel.\nconst inp = $input.first().json || {};\nlet d = inp;\nif (typeof inp.query === 'string') { try { d = JSON.parse(inp.query); } catch (e) { d = inp; } }\nelse if (inp.query && typeof inp.query === 'object') { d = inp.query; }\nconst acct = String(d.accountId ?? '').trim(), wf = String(d.workflowId ?? '').trim();\nif (!/^\\d+$/.test(acct) && !wf) throw new Error('Find Reservations tool was called without accountId or workflowId - refusing to guess whose data to use.');\nreturn [{ json: Object.assign({}, d, { accountId: acct, workflowId: wf }) }];"
+    }
+   },
+   {
+    "id": "013c9116-8846-41b1-b39c-498145eca5cb",
+    "name": "Query",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     440,
+     0
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT receply_find_reservations($1::jsonb) AS r",
+     "options": {
+      "queryReplacement": "={{ [ JSON.stringify({ account_id: String($json.accountId || ''), workflow_id: String($json.workflowId || '') , ticket: String($json.ticket || ''), phone: String($json.phone || ''), email: String($json.email || '') }) ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueRegularOutput",
+    "alwaysOutputData": true
+   },
+   {
+    "id": "c5d877d7-7942-456c-8f48-6e4b9085cc29",
+    "name": "Answer",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     660,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const j = $input.first().json || {};\nif (j.error) return [{ json: { reservations: [], message: 'Reservations cannot be looked up right now. Do not guess; offer to connect the guest with a person.' } }];\nreturn [{ json: j.r || { reservations: [], message: 'No reservation matches those details.' } }];"
+    }
+   }
+  ],
+  "connections": {
+   "Tool Input": {
+    "main": [
+     [
+      {
+       "node": "Tenant Guard",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Tenant Guard": {
+    "main": [
+     [
+      {
+       "node": "Query",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Query": {
+    "main": [
+     [
+      {
+       "node": "Answer",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionCounter": 1,
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+   "name": null,
+   "description": null
+  }
+ }
+]

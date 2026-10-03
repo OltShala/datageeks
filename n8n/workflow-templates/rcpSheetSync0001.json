@@ -1,0 +1,621 @@
+[
+ {
+  "updatedAt": "2026-10-01T13:01:12.000Z",
+  "createdAt": "2026-09-30T19:14:02.019Z",
+  "id": "rcpSheetSync0001",
+  "name": "Receply — Sheet Sync (rooms in, reservations out)",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+   {
+    "id": "fd8b9efb-3085-494f-b15c-97fd5fd90098",
+    "name": "Every 10 Minutes",
+    "type": "n8n-nodes-base.scheduleTrigger",
+    "typeVersion": 1.2,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "rule": {
+      "interval": [
+       {
+        "field": "minutes",
+        "minutesInterval": 10
+       }
+      ]
+     }
+    }
+   },
+   {
+    "id": "f81210d3-9e04-4d62-881f-e8bfdb8b5f87",
+    "name": "Run Manually",
+    "type": "n8n-nodes-base.manualTrigger",
+    "typeVersion": 1,
+    "position": [
+     0,
+     200
+    ],
+    "parameters": {}
+   },
+   {
+    "id": "acc287e2-51e9-4be1-8dfe-666d9cc3d4f2",
+    "name": "Clients",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     220,
+     100
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "-- every run also expires lapsed holds (status held -> expired), so the room is free again\nWITH lapsed AS (SELECT receply_expire_holds(NULL) AS n)\nSELECT account_id, business_name, sheet_id, coalesce(timezone, 'Europe/Belgrade') AS timezone, coalesce(alert_topic, '') AS alert_topic, coalesce(sheet_sync_error, '') AS prev_error, coalesce(mirror_hash, '') AS prev_hash FROM receply_clients CROSS JOIN lapsed ORDER BY account_id",
+     "options": {}
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    }
+   },
+   {
+    "id": "af661e3d-31c8-49b5-99b5-c9d085d70db5",
+    "name": "Each Client",
+    "type": "n8n-nodes-base.splitInBatches",
+    "typeVersion": 3,
+    "position": [
+     440,
+     100
+    ],
+    "parameters": {
+     "batchSize": 1,
+     "options": {}
+    }
+   },
+   {
+    "id": "e0c84c6d-12be-4836-aedd-b1fcff2cd9bd",
+    "name": "Read Rooms",
+    "type": "n8n-nodes-base.googleSheets",
+    "typeVersion": 4.7,
+    "position": [
+     660,
+     0
+    ],
+    "parameters": {
+     "operation": "read",
+     "documentId": {
+      "__rl": true,
+      "mode": "id",
+      "value": "={{ $('Each Client').first().json.sheet_id }}"
+     },
+     "sheetName": {
+      "__rl": true,
+      "mode": "name",
+      "value": "RoomInformation"
+     },
+     "options": {}
+    },
+    "credentials": {
+     "googleSheetsOAuth2Api": {
+      "id": "2VVltbj0a8vgsnP5",
+      "name": "Google Sheets account"
+     }
+    },
+    "executeOnce": true,
+    "alwaysOutputData": true,
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "c9e7d111-ee53-46a6-9b84-965921a85a72",
+    "name": "Check Rooms",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     880,
+     0
+    ],
+    "parameters": {
+     "jsCode": "// RoomInformation -> rooms. An unreadable or empty tab must never switch every room off: in that case the\n// last good list is kept and the problem reported.\nconst c = $('Each Client').first().json;\nconst items = $input.all().map((i) => i.json || {});\nconst failed = items.find((j) => j.error);\nconst rows = items.filter((j) => !j.error && Object.keys(j).length);\nconst KNOWN = ['row_number', 'RoomNumber', 'RoomType', 'Persons', 'Description'];\nconst problems = [], rooms = [], seen = new Set();\nif (failed) problems.push('could not read the RoomInformation tab: ' + String((failed.error && failed.error.message) || failed.error).slice(0, 160));\nfor (const r of rows) {\n  const num = String(r.RoomNumber ?? '').trim();\n  if (!num) { if (Object.entries(r).some(([k, v]) => k !== 'row_number' && String(v ?? '').trim())) problems.push('row ' + r.row_number + ' has no RoomNumber'); continue; }\n  if (seen.has(num)) { problems.push('room ' + num + ' is listed twice (row ' + r.row_number + ')'); continue; }\n  seen.add(num);\n  let persons = null;\n  if (String(r.Persons ?? '').trim() !== '') { persons = parseInt(String(r.Persons), 10); if (!(persons > 0)) { problems.push('room ' + num + ': Persons must be a number above 0'); persons = null; } }\n  const extra = {};\n  for (const [k, v] of Object.entries(r)) if (!KNOWN.includes(k) && String(v ?? '').trim() !== '') extra[k] = v;\n  rooms.push({ room_number: num, room_type: String(r.RoomType ?? '').trim() || null, persons, description: String(r.Description ?? '').trim() || null, extra, sheet_row: r.row_number });\n}\nif (!failed && !rooms.length) problems.push('the RoomInformation tab has no rooms - kept the previous room list');\nreturn [{ json: Object.assign({}, c, { apply: !failed && rooms.length > 0, rooms: JSON.stringify(rooms), roomCount: rooms.length, problems: problems.join('; ') }) }];"
+    }
+   },
+   {
+    "id": "9d71241b-5ed2-4465-82cb-ba90a5dac283",
+    "name": "Reservations",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     1100,
+     0
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT r.ticket AS \"Ticket\", coalesce(r.booking_no::text, '') AS \"Booking no.\", CASE WHEN r.status = 'held' THEN 'held (waiting for the guest)' ELSE r.status END AS \"Status\",\n       btrim(coalesce(g.first_name, '') || ' ' || coalesce(g.last_name, '')) AS \"Guest\", coalesce(g.phone, '') AS \"Phone\", coalesce(g.email, '') AS \"Email\",\n       coalesce(r.room_number, '') AS \"Room\", coalesce(r.guests_count::text, '') AS \"Guests\", coalesce(r.check_in::text, '') AS \"Check-in\", coalesce(r.check_out::text, '') AS \"Check-out\",\n       coalesce(r.channel, '') AS \"Channel\", to_char(r.created_at AT TIME ZONE $2, 'YYYY-MM-DD HH24:MI') AS \"Booked at\",\n       coalesce(to_char(r.cancelled_at AT TIME ZONE $2, 'YYYY-MM-DD HH24:MI'), '') AS \"Cancelled at\", coalesce(r.note, '') AS \"Note\"\n  FROM receply_reservations r LEFT JOIN receply_guests g ON g.id = r.guest_id\n WHERE r.account_id = $1::int AND r.status <> 'expired'\n ORDER BY (r.check_out IS NULL OR r.check_out < current_date), r.check_in NULLS LAST, r.id",
+     "options": {
+      "queryReplacement": "={{ [ String($('Each Client').first().json.account_id), $('Each Client').first().json.timezone ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "executeOnce": true,
+    "alwaysOutputData": true,
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "0d1759ee-6a1b-4db8-909f-e7661966a478",
+    "name": "Build Mirror",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     1320,
+     0
+    ],
+    "parameters": {
+     "jsCode": "// The read-only copy of the reservations for the owner. Rewritten only when something changed.\nconst c = $('Check Rooms').first().json;\nconst items = $input.all().map((i) => i.json || {});\nconst failed = items.find((j) => j.error);\nconst rows = items.filter((j) => !j.error && j.Ticket !== undefined);\nconst header = ['Ticket', 'Booking no.', 'Status', 'Guest', 'Phone', 'Email', 'Room', 'Guests', 'Check-in', 'Check-out', 'Channel', 'Booked at', 'Cancelled at', 'Note'];\nconst body = rows.map((r) => header.map((h) => String(r[h] ?? '')));\nlet h = 2166136261; const s = JSON.stringify(body);\nfor (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }\nconst hash = 'fnv1a:' + h.toString(16) + ':' + body.length;\nconst note = ['Read-only copy of your reservations from Receply. Edits here are overwritten - to change a booking, reply in Chatwoot or ask the operator. Updated ' + new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC.'];\nreturn [{ json: Object.assign({}, c, { changed: !failed && hash !== c.prev_hash, hash, rowCount: body.length,\n  readError: failed ? String((failed.error && failed.error.message) || failed.error).slice(0, 160) : '',\n  values: JSON.stringify([note, header].concat(body)) }) }];"
+    }
+   },
+   {
+    "id": "e35dcf2d-942a-47e8-9ec4-cfc3b8439412",
+    "name": "Changed?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     1540,
+     0
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose",
+       "version": 2
+      },
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "d11fc79c-2804-46f1-bb19-a81b5a64cb24",
+        "leftValue": "={{ $json.changed === true }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "16e263b3-df79-4262-8fe7-7969b234a809",
+    "name": "Clear Tab",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     1760,
+     -80
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $json.sheet_id + '/values/' + encodeURIComponent(\"'Reservations (Receply)'!A:Z\") + ':clear' }}",
+     "options": {},
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "googleSheetsOAuth2Api"
+    },
+    "credentials": {
+     "googleSheetsOAuth2Api": {
+      "id": "2VVltbj0a8vgsnP5",
+      "name": "Google Sheets account"
+     }
+    },
+    "onError": "continueErrorOutput"
+   },
+   {
+    "id": "7c6f0b73-e696-4506-888d-cf682309b731",
+    "name": "Add Tab",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     1980,
+     60
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $('Build Mirror').first().json.sheet_id + ':batchUpdate' }}",
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ requests: [ { addSheet: { properties: { title: 'Reservations (Receply)' } } } ] }) }}",
+     "options": {},
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "googleSheetsOAuth2Api"
+    },
+    "credentials": {
+     "googleSheetsOAuth2Api": {
+      "id": "2VVltbj0a8vgsnP5",
+      "name": "Google Sheets account"
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "8e778c3d-8b67-443a-9d5d-2682fe404552",
+    "name": "Write Tab",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     2200,
+     -80
+    ],
+    "parameters": {
+     "method": "PUT",
+     "url": "={{ 'https://sheets.googleapis.com/v4/spreadsheets/' + $('Build Mirror').first().json.sheet_id + '/values/' + encodeURIComponent(\"'Reservations (Receply)'!A1\") + '?valueInputOption=RAW' }}",
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ values: JSON.parse($('Build Mirror').first().json.values) }) }}",
+     "options": {},
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "googleSheetsOAuth2Api"
+    },
+    "credentials": {
+     "googleSheetsOAuth2Api": {
+      "id": "2VVltbj0a8vgsnP5",
+      "name": "Google Sheets account"
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "128aa392-d012-4a11-a13a-bf3abba67f9e",
+    "name": "Mirror Result",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     2420,
+     100
+    ],
+    "parameters": {
+     "jsCode": "const m = $('Build Mirror').first().json;\nlet problem = m.readError ? 'could not read the reservations: ' + m.readError : '', hash = m.prev_hash;\nif (m.changed) {\n  const w = $('Write Tab').isExecuted ? $('Write Tab').first().json : null;\n  if (w && !w.error && w.updatedRange) hash = m.hash;\n  else problem = 'could not update the \"Reservations (Receply)\" tab: ' + String((w && w.error && (w.error.message || w.error)) || 'no response').slice(0, 160);\n}\nreturn [{ json: Object.assign({}, m, { problems: [m.problems, problem].filter(Boolean).join('; '), mirror_hash: hash, values: undefined }) }];"
+    },
+    "executeOnce": true
+   },
+   {
+    "id": "fad95f51-315d-4b95-bb6d-72d9e6833401",
+    "name": "Save Sync",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     2640,
+     100
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "WITH incoming AS (\n  SELECT * FROM jsonb_to_recordset(CASE WHEN $2::boolean THEN $3::jsonb ELSE '[]'::jsonb END)\n    AS x(room_number text, room_type text, persons int, description text, extra jsonb, sheet_row int)\n), up AS (\n  INSERT INTO receply_rooms AS rr (account_id, room_number, room_type, persons, description, extra, sheet_row, active, updated_at)\n  SELECT $1::int, room_number, room_type, persons, description, coalesce(extra, '{}'::jsonb), sheet_row, true, now() FROM incoming\n  ON CONFLICT (account_id, room_number) DO UPDATE\n    SET room_type = EXCLUDED.room_type, persons = EXCLUDED.persons, description = EXCLUDED.description, extra = EXCLUDED.extra,\n        sheet_row = EXCLUDED.sheet_row, active = true,\n        updated_at = CASE WHEN (rr.room_type, rr.persons, rr.description, rr.extra, rr.active) IS DISTINCT FROM\n                              (EXCLUDED.room_type, EXCLUDED.persons, EXCLUDED.description, EXCLUDED.extra, true) THEN now() ELSE rr.updated_at END\n  RETURNING 1\n), gone AS (\n  UPDATE receply_rooms SET active = false, updated_at = now()\n   WHERE $2::boolean AND account_id = $1::int AND active AND room_number NOT IN (SELECT room_number FROM incoming)\n  RETURNING 1\n)\nUPDATE receply_clients SET sheet_synced_at = now(), sheet_sync_error = nullif($4, ''), mirror_hash = nullif($5, '')\n WHERE account_id = $1::int\nRETURNING account_id, (SELECT count(*) FROM up) AS rooms_saved, (SELECT count(*) FROM gone) AS rooms_switched_off, sheet_sync_error",
+     "options": {
+      "queryReplacement": "={{ [ String($json.account_id), $json.apply ? 'true' : 'false', $json.rooms, $json.problems || '', $json.mirror_hash || '' ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    }
+   },
+   {
+    "id": "d9fb3e92-fa15-4c6a-8106-b617d93aa5ac",
+    "name": "New Problem?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     2860,
+     100
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose",
+       "version": 2
+      },
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "0bdfcaa6-2c6d-4531-9a1b-f3b04fc3dd6f",
+        "leftValue": "={{ !!$('Mirror Result').first().json.problems && $('Mirror Result').first().json.problems !== $('Mirror Result').first().json.prev_error }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "3aff4da7-58b3-4efd-928b-fd68a0723320",
+    "name": "Alert Sync Problem",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     3080,
+     0
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://ntfy.sh",
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ topic: $('Mirror Result').first().json.alert_topic || '__RL_TOPIC__', title: 'Receply - Google Sheet sync problem', message: ($('Mirror Result').first().json.business_name || ('account ' + $('Mirror Result').first().json.account_id)) + ': ' + $('Mirror Result').first().json.problems + '. The AI keeps using the last good data until this is fixed.', priority: 4, tags: ['warning'] }) }}",
+     "options": {
+      "timeout": 10000
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "48563988-544a-44ec-b7c6-89aba7bce8ec",
+    "name": "Rejoin",
+    "type": "n8n-nodes-base.noOp",
+    "typeVersion": 1,
+    "position": [
+     3300,
+     100
+    ],
+    "parameters": {}
+   },
+   {
+    "id": "4a16d47d-c340-4493-810a-6304a615fd9d",
+    "name": "Done",
+    "type": "n8n-nodes-base.noOp",
+    "typeVersion": 1,
+    "position": [
+     660,
+     260
+    ],
+    "parameters": {}
+   }
+  ],
+  "connections": {
+   "Every 10 Minutes": {
+    "main": [
+     [
+      {
+       "node": "Clients",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Run Manually": {
+    "main": [
+     [
+      {
+       "node": "Clients",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Clients": {
+    "main": [
+     [
+      {
+       "node": "Each Client",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Each Client": {
+    "main": [
+     [
+      {
+       "node": "Done",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Read Rooms",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Read Rooms": {
+    "main": [
+     [
+      {
+       "node": "Check Rooms",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check Rooms": {
+    "main": [
+     [
+      {
+       "node": "Reservations",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Reservations": {
+    "main": [
+     [
+      {
+       "node": "Build Mirror",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build Mirror": {
+    "main": [
+     [
+      {
+       "node": "Changed?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Changed?": {
+    "main": [
+     [
+      {
+       "node": "Clear Tab",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Mirror Result",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Clear Tab": {
+    "main": [
+     [
+      {
+       "node": "Write Tab",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Add Tab",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Add Tab": {
+    "main": [
+     [
+      {
+       "node": "Write Tab",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Write Tab": {
+    "main": [
+     [
+      {
+       "node": "Mirror Result",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Mirror Result": {
+    "main": [
+     [
+      {
+       "node": "Save Sync",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Save Sync": {
+    "main": [
+     [
+      {
+       "node": "New Problem?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "New Problem?": {
+    "main": [
+     [
+      {
+       "node": "Alert Sync Problem",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Rejoin",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Alert Sync Problem": {
+    "main": [
+     [
+      {
+       "node": "Rejoin",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Rejoin": {
+    "main": [
+     [
+      {
+       "node": "Each Client",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "callerPolicy": "workflowsFromSameOwner",
+   "saveDataErrorExecution": "all",
+   "saveManualExecutions": true
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionCounter": 4,
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+   "name": null,
+   "description": null
+  }
+ }
+]

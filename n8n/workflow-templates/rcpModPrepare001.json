@@ -1,0 +1,993 @@
+[
+ {
+  "updatedAt": "2026-09-27T20:18:47.000Z",
+  "createdAt": "2026-09-27T20:11:54.485Z",
+  "id": "rcpModPrepare001",
+  "name": "Receply · Prepare Turn (shared module)",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+   {
+    "id": "d22f0140-a8e4-4ec2-8f68-d439bd400521",
+    "name": "Turn In",
+    "type": "n8n-nodes-base.executeWorkflowTrigger",
+    "typeVersion": 1.1,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "workflowInputs": {
+      "values": [
+       {
+        "name": "accountId",
+        "type": "any"
+       },
+       {
+        "name": "cwToken",
+        "type": "any"
+       },
+       {
+        "name": "body",
+        "type": "any"
+       },
+       {
+        "name": "chatInput",
+        "type": "any"
+       },
+       {
+        "name": "senderPhone",
+        "type": "any"
+       },
+       {
+        "name": "conversationId",
+        "type": "any"
+       },
+       {
+        "name": "sessionId",
+        "type": "any"
+       },
+       {
+        "name": "contactId",
+        "type": "any"
+       },
+       {
+        "name": "source",
+        "type": "any"
+       },
+       {
+        "name": "senderName",
+        "type": "any"
+       },
+       {
+        "name": "imageUrl",
+        "type": "any"
+       },
+       {
+        "name": "hasImage",
+        "type": "any"
+       },
+       {
+        "name": "audioUrl",
+        "type": "any"
+       },
+       {
+        "name": "hasAudio",
+        "type": "any"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "parameters": {
+     "jsCode": "// Bot Active Gate v2 — reads from webhook payload directly (no API call, no loop, no inbox hardcode)\nconst input = $input.first().json;\nlet conv = {};\ntry {\n  conv = $('Turn In').first().json.body.conversation || {};\n} catch (e) {\n  // Web chat trigger path — no Chatwoot conversation, bot always replies\n  return [{ json: Object.assign({}, input, { botCheck: { botActive: true, pauseReason: 'no_chatwoot_context', conversationId: null } }) }];\n}\n\nconst meta = conv.meta || {};\nconst assignee = meta.assignee;\nconst attrs = conv.custom_attributes || {};\nconst now = Date.now();\nconst pausedUntil = attrs.bot_paused_until ? Date.parse(attrs.bot_paused_until) : 0;\n\nlet botActive = true;\nlet pauseReason = '';\n\n// Chatwoot 4.16+ assigns new bot-handled conversations to the bot itself. That is not a human\n// takeover — only a human (type 'user') assignee pauses the bot.\nif (assignee && assignee.id && assignee.type !== 'agent_bot') {\n  botActive = false;\n  pauseReason = 'human_assigned:' + (assignee.name || assignee.id);\n} else if (attrs.bot_active === false) {\n  botActive = false;\n  pauseReason = 'bot_active_flag_false';\n} else if (pausedUntil > now) {\n  botActive = false;\n  pauseReason = 'paused_until:' + attrs.bot_paused_until;\n}\n\nif (!botActive) {\n  // Stop silently. Chatwoot already has the customer message natively (no need to mirror).\n  // No private note (would cause feedback loop with Auto-Pause).\n  console.log('[Bot Active Gate] silent: ' + pauseReason + ' conv=' + conv.id);\n  return [];\n}\n\nreturn [{ json: Object.assign({}, input, { botCheck: { botActive: true, pauseReason: '', conversationId: conv.id } }) }];\n"
+    },
+    "id": "c962ecf2-8037-42b8-bd5e-a830bf04d6d9",
+    "name": "Bot Active Gate",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     220,
+     0
+    ],
+    "onError": "continueRegularOutput"
+   },
+   {
+    "name": "Fetch Office Hours",
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT office_open, office_close, office_days, timezone, owner_email, alert_topic FROM receply_clients WHERE account_id = $1",
+     "options": {
+      "queryReplacement": "={{ $('Turn In').first().json.accountId }}"
+     }
+    },
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     440,
+     0
+    ],
+    "id": "rcp-fetch-hours",
+    "onError": "continueRegularOutput",
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "alwaysOutputData": true
+   },
+   {
+    "name": "Compute Open State",
+    "parameters": {
+     "jsCode": "const hours = $input.first().json || {};\nconst base  = $('Bot Active Gate').first().json;      // keeps chatInput AND botCheck intact\nconst tz    = hours.timezone     || 'Europe/Belgrade';\nconst open  = hours.office_open  || '08:00';\nconst close = hours.office_close || '20:00';\nconst days  = hours.office_days  || '1-7';\n\nconst parts = new Intl.DateTimeFormat('en-GB', {\n  timeZone: tz, hour12: false, weekday: 'short', hour: '2-digit', minute: '2-digit'\n}).formatToParts(new Date());\nconst get = t => (parts.find(p => p.type === t) || {}).value;\nconst hh = parseInt(get('hour'), 10), mm = parseInt(get('minute'), 10);\nconst nowMin = hh * 60 + mm;\nconst isoDay = { Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6, Sun:7 }[get('weekday')] || 1;\n\nconst toMin = s => { const [a, b] = String(s).split(':').map(Number); return a * 60 + (b || 0); };\nconst openMin = toMin(open), closeMin = toMin(close);\nconst [d1, d2] = days.split('-').map(Number);\nconst dayOk = d2 ? (isoDay >= d1 && isoDay <= d2) : isoDay === d1;\n// closeMin <= openMin means the window crosses midnight (e.g. 22:00-06:00)\nconst inWindow = closeMin > openMin\n  ? (nowMin >= openMin && nowMin < closeMin)\n  : (nowMin >= openMin || nowMin < closeMin);\nconst isOpen = dayOk && inWindow;\nconst nowLocal = String(get('hour')).padStart(2,'0') + ':' + String(get('minute')).padStart(2,'0');\n\nreturn [{ json: Object.assign({}, base, {\n  isOpen, nowLocal, officeOpen: open, officeClose: close,\n  hoursLine: isOpen\n    ? ('It is ' + nowLocal + ' local time and the team IS available now (' + open + '-' + close + ').')\n    : ('It is ' + nowLocal + ' local time and the team is NOT available now. They are back at ' + open + ' local time.')\n}) }];"
+    },
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     660,
+     0
+    ],
+    "id": "rcp-open-state"
+   },
+   {
+    "parameters": {
+     "conditions": {
+      "combinator": "or",
+      "conditions": [
+       {
+        "id": "kw-human",
+        "leftValue": "={{ $json.chatInput.toLowerCase() }}",
+        "operator": {
+         "operation": "contains",
+         "type": "string"
+        },
+        "rightValue": "human"
+       },
+       {
+        "id": "kw-manager",
+        "leftValue": "={{ $json.chatInput.toLowerCase() }}",
+        "operator": {
+         "operation": "contains",
+         "type": "string"
+        },
+        "rightValue": "manager"
+       },
+       {
+        "id": "kw-njeriu",
+        "leftValue": "={{ $json.chatInput.toLowerCase() }}",
+        "operator": {
+         "operation": "contains",
+         "type": "string"
+        },
+        "rightValue": "njeriu"
+       },
+       {
+        "id": "kw-menaxher",
+        "leftValue": "={{ $json.chatInput.toLowerCase() }}",
+        "operator": {
+         "operation": "contains",
+         "type": "string"
+        },
+        "rightValue": "menaxher"
+       },
+       {
+        "id": "kw-refund",
+        "leftValue": "={{ $json.chatInput.toLowerCase() }}",
+        "operator": {
+         "operation": "contains",
+         "type": "string"
+        },
+        "rightValue": "refund"
+       },
+       {
+        "id": "kw-avokat",
+        "leftValue": "={{ $json.chatInput.toLowerCase() }}",
+        "operator": {
+         "operation": "contains",
+         "type": "string"
+        },
+        "rightValue": "avokat"
+       },
+       {
+        "id": "kw-lawyer",
+        "leftValue": "={{ $json.chatInput.toLowerCase() }}",
+        "operator": {
+         "operation": "contains",
+         "type": "string"
+        },
+        "rightValue": "lawyer"
+       },
+       {
+        "id": "kw-ankese",
+        "leftValue": "={{ $json.chatInput.toLowerCase() }}",
+        "operator": {
+         "operation": "contains",
+         "type": "string"
+        },
+        "rightValue": "ankese"
+       },
+       {
+        "id": "kw-complaint",
+        "leftValue": "={{ $json.chatInput.toLowerCase() }}",
+        "operator": {
+         "operation": "contains",
+         "type": "string"
+        },
+        "rightValue": "complaint"
+       },
+       {
+        "id": "kw-polici",
+        "leftValue": "={{ $json.chatInput.toLowerCase() }}",
+        "operator": {
+         "operation": "contains",
+         "type": "string"
+        },
+        "rightValue": "polici"
+       }
+      ],
+      "options": {
+       "caseSensitive": false,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 2
+      }
+     },
+     "options": {}
+    },
+    "id": "keyword-escalation-check",
+    "name": "Keyword Escalation Check",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.3,
+    "position": [
+     880,
+     0
+    ]
+   },
+   {
+    "name": "Fetch Last Activity",
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT count(*)::int AS prior_msgs,\n       max(created_at) AS last_seen,\n       (SELECT message->>'content' FROM n8n_chat_memory WHERE session_id = $1 ORDER BY id DESC LIMIT 1) AS last_content\n  FROM n8n_chat_memory\n WHERE session_id = $1",
+     "options": {
+      "queryReplacement": "={{ [ 'acct' + $('Turn In').first().json.accountId + ':' + $('Turn In').first().json.sessionId ] }}"
+     }
+    },
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     1100,
+     120
+    ],
+    "id": "rcp-fetch-last-activity",
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueRegularOutput",
+    "alwaysOutputData": true
+   },
+   {
+    "name": "Compute Continuity",
+    "parameters": {
+     "jsCode": "// Tells the agent whether this guest is new, mid-conversation, or returning — and when they\n// last wrote. Passes the incoming item through untouched: Has Audio? / Has Image? and the agent\n// all read fields from it.\nconst base = $('Compute Open State').first().json;\nconst row  = $input.first().json || {};\nconst tz   = ($('Fetch Office Hours').isExecuted && $('Fetch Office Hours').first().json.timezone) || 'Europe/Belgrade';\n\nconst prior       = Number(row.prior_msgs || 0);\nconst lastSeen    = row.last_seen ? new Date(row.last_seen) : null;\nconst lastByStaff = /^\\[Reply from our staff/.test(String(row.last_content || ''));\n\nlet note = '';\nif (row.error || row.prior_msgs === undefined) {\n  note = '';                                   // lookup failed: say nothing rather than guess\n} else if (prior === 0) {\n  note = 'This is the first time this customer has written to us. There is no earlier conversation.';\n} else if (!lastSeen) {\n  note = 'This customer has written to us before and the earlier messages are in your memory, but we do not know exactly when. Do not assume an old request is still in progress: briefly confirm before continuing it.';\n} else {\n  const hrs  = (Date.now() - lastSeen.getTime()) / 3.6e6;\n  const ago  = hrs < 48 ? Math.max(1, Math.round(hrs)) + ' hours' : Math.round(hrs / 24) + ' days';\n  const when = new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'long', day: 'numeric',\n                 month: 'long', hour: '2-digit', minute: '2-digit', hour12: false }).format(lastSeen);\n  if (hrs < 12) {\n    note = '';                                 // same conversation: carry on normally\n  } else if (hrs < 24 * 7) {\n    note = 'RETURNING CUSTOMER: they last wrote to us ' + ago + ' ago (' + when + '). The earlier conversation is in your memory. '\n         + 'Pick up where it left off and refer to it naturally, for example \"Welcome back! About the double room you asked about...\". '\n         + 'Before completing anything from that earlier request, briefly confirm it is still what they want. Do not ask again for details they already gave.';\n  } else {\n    note = 'RETURNING CUSTOMER AFTER A LONG GAP: they last wrote to us ' + ago + ' ago (' + when + '). '\n         + 'Treat the earlier conversation in your memory as background only; that request is probably no longer current. '\n         + 'Greet them as a returning customer and do not continue an old booking or quote without first confirming it is still wanted. '\n         + 'Prices and availability may have changed since then, so check again with your tools.';\n  }\n  if (note && lastByStaff) note += ' The last message in that conversation was written personally by our staff: honour what they said.';\n}\n\nreturn [{ json: Object.assign({}, base, {\n  isReturning: prior > 0,\n  lastSeen: row.last_seen || null,\n  continuityNote: note,\n}) }];"
+    },
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     1320,
+     120
+    ],
+    "id": "rcp-compute-continuity"
+   },
+   {
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose",
+       "version": 2
+      },
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "ha1",
+        "leftValue": "={{ $json.hasAudio }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ]
+     },
+     "options": {}
+    },
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     1540,
+     120
+    ],
+    "id": "rcp-has-audio",
+    "name": "Has Audio?"
+   },
+   {
+    "parameters": {
+     "url": "={{ $('Turn In').first().json.audioUrl }}",
+     "options": {
+      "response": {
+       "response": {
+        "responseFormat": "file",
+        "outputPropertyName": "aud"
+       }
+      }
+     }
+    },
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     1760,
+     -60
+    ],
+    "id": "rcp-dl-audio",
+    "name": "Download Audio"
+   },
+   {
+    "parameters": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/audio/transcriptions",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "openAiApi",
+     "sendBody": true,
+     "contentType": "multipart-form-data",
+     "bodyParameters": {
+      "parameters": [
+       {
+        "parameterType": "formBinaryData",
+        "name": "file",
+        "inputDataFieldName": "aud"
+       },
+       {
+        "name": "model",
+        "value": "whisper-1"
+       }
+      ]
+     },
+     "options": {}
+    },
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     1980,
+     -60
+    ],
+    "id": "rcp-transcribe",
+    "name": "Transcribe Voice Note",
+    "credentials": {
+     "openAiApi": {
+      "id": "geeJrIzU3XvuXkmZ",
+      "name": "OpenAi account"
+     }
+    }
+   },
+   {
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "ma-1",
+        "name": "chatInput",
+        "type": "string",
+        "value": "={{ ($('Turn In').first().json.chatInput || '').trim() + (($('Turn In').first().json.chatInput || '').trim().length ? '\\n\\n' : '') + '[The customer sent a voice note. They said: \"' + (($json.text || '').trim() || 'something I could not make out') + '\"]' }}"
+       },
+       {
+        "id": "ma-senderPhone",
+        "name": "senderPhone",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.senderPhone }}"
+       },
+       {
+        "id": "ma-conversationId",
+        "name": "conversationId",
+        "type": "number",
+        "value": "={{ $('Turn In').first().json.conversationId }}"
+       },
+       {
+        "id": "ma-sessionId",
+        "name": "sessionId",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.sessionId }}"
+       },
+       {
+        "id": "ma-source",
+        "name": "source",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.source }}"
+       },
+       {
+        "id": "ma-senderName",
+        "name": "senderName",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.senderName }}"
+       }
+      ]
+     },
+     "options": {}
+    },
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     2200,
+     -60
+    ],
+    "id": "rcp-merge-audio",
+    "name": "Merge Audio Context"
+   },
+   {
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose",
+       "version": 2
+      },
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "hi1",
+        "leftValue": "={{ $json.hasImage }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ]
+     },
+     "options": {}
+    },
+    "id": "has-image-if",
+    "name": "Has Image?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.3,
+    "position": [
+     1760,
+     280
+    ]
+   },
+   {
+    "parameters": {
+     "url": "={{ $('Turn In').first().json.imageUrl }}",
+     "options": {
+      "response": {
+       "response": {
+        "responseFormat": "file",
+        "outputPropertyName": "img"
+       }
+      }
+     }
+    },
+    "id": "download-image-http",
+    "name": "Download Image",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     1980,
+     200
+    ],
+    "onError": "continueRegularOutput"
+   },
+   {
+    "parameters": {
+     "jsCode": "const items=$input.all(); const buf=await this.helpers.getBinaryDataBuffer(0,'img'); const mime=(items[0].binary&&items[0].binary.img&&items[0].binary.img.mimeType)||'image/jpeg'; return [{ json: Object.assign({}, items[0].json, { imgDataUri:'data:'+mime+';base64,'+buf.toString('base64') }) }];"
+    },
+    "id": "image-to-base64",
+    "name": "Image to Base64",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     2200,
+     200
+    ],
+    "onError": "continueRegularOutput"
+   },
+   {
+    "parameters": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/chat/completions",
+     "authentication": "predefinedCredentialType",
+     "nodeCredentialType": "openAiApi",
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', max_tokens: 300, messages: [ { role: 'user', content: [ { type: 'text', text: 'You are assisting a hotel receptionist AI. Look at this image the customer sent and describe, in 1-3 concise sentences, what it shows and anything relevant to a booking or guest request. If it contains text, an ID, a receipt, a screenshot or a document, transcribe the key details. Reply with only the description.' }, { type: 'image_url', image_url: { url: $json.imgDataUri } } ] } ] }) }}",
+     "options": {}
+    },
+    "id": "describe-image-http",
+    "name": "Describe Image (vision)",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     2420,
+     200
+    ],
+    "credentials": {
+     "openAiApi": {
+      "id": "geeJrIzU3XvuXkmZ",
+      "name": "OpenAi account"
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "mi-1",
+        "name": "chatInput",
+        "type": "string",
+        "value": "={{ ($('Turn In').first().json.chatInput || '').trim() + (($('Turn In').first().json.chatInput || '').trim().length ? '\\n\\n' : '') + '[The customer sent an image. It shows: ' + (($json.choices && $json.choices[0] && $json.choices[0].message) ? $json.choices[0].message.content : 'an image I could not read clearly') + ']' }}"
+       },
+       {
+        "id": "mi-2",
+        "name": "senderPhone",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.senderPhone }}"
+       },
+       {
+        "id": "mi-3",
+        "name": "conversationId",
+        "type": "number",
+        "value": "={{ $('Turn In').first().json.conversationId }}"
+       },
+       {
+        "id": "mi-4",
+        "name": "sessionId",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.sessionId }}"
+       },
+       {
+        "id": "mi-5",
+        "name": "source",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.source }}"
+       },
+       {
+        "id": "mi-6",
+        "name": "senderName",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.senderName }}"
+       }
+      ]
+     },
+     "options": {}
+    },
+    "id": "merge-image-context",
+    "name": "Merge Image Context",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     2640,
+     200
+    ]
+   },
+   {
+    "id": "6382b5f3-0bcb-4795-afd9-823176412b71",
+    "name": "Escalate (keyword)",
+    "type": "n8n-nodes-base.executeWorkflow",
+    "typeVersion": 1.2,
+    "position": [
+     1100,
+     -220
+    ],
+    "parameters": {
+     "source": "database",
+     "workflowId": {
+      "__rl": true,
+      "mode": "id",
+      "value": "rcpModEscalate01"
+     },
+     "workflowInputs": {
+      "mappingMode": "defineBelow",
+      "value": {
+       "accountId": "={{ $('Turn In').first().json.accountId }}",
+       "cwToken": "={{ $('Turn In').first().json.cwToken }}",
+       "conversationId": "={{ $('Turn In').first().json.conversationId }}",
+       "senderName": "={{ $('Turn In').first().json.senderName }}",
+       "senderPhone": "={{ $('Turn In').first().json.senderPhone }}",
+       "chatInput": "={{ $('Turn In').first().json.chatInput }}",
+       "reason": "The customer used an escalation keyword",
+       "trigger": "keyword",
+       "postGuestMessage": "={{ true }}",
+       "isOpen": "={{ $json.isOpen === true }}",
+       "officeOpen": "={{ $json.officeOpen || '' }}",
+       "ownerEmail": "={{ $('Fetch Office Hours').first().json.owner_email || '' }}",
+       "alertTopic": "={{ $('Fetch Office Hours').first().json.alert_topic || '' }}"
+      },
+      "matchingColumns": [],
+      "schema": [],
+      "attemptToConvertTypes": false,
+      "convertFieldsToString": false
+     },
+     "mode": "once",
+     "options": {
+      "waitForSubWorkflow": true
+     }
+    }
+   },
+   {
+    "id": "d4bbcb42-ff74-48d3-b3fb-59c38da71a84",
+    "name": "Escalated",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     1320,
+     -220
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "5d3f4ab7-36a9-4562-94ea-131ff840ea4e",
+        "name": "action",
+        "type": "string",
+        "value": "escalated"
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "703decd3-7585-43ee-8693-bf8b874d1a2f",
+    "name": "Turn Ready",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     2900,
+     120
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "c78f81b4-662c-445b-9ab6-4249e02396cb",
+        "name": "action",
+        "type": "string",
+        "value": "reply"
+       },
+       {
+        "id": "163449fe-3a4a-485e-9bef-02f4cb3f4d92",
+        "name": "chatInput",
+        "type": "string",
+        "value": "={{ $json.chatInput }}"
+       },
+       {
+        "id": "e26ee240-fffe-4051-9235-bf70697e3e22",
+        "name": "accountId",
+        "type": "number",
+        "value": "={{ $('Turn In').first().json.accountId }}"
+       },
+       {
+        "id": "fb33f4f1-bbe6-4c5a-9b1a-bcaa8fa66644",
+        "name": "conversationId",
+        "type": "number",
+        "value": "={{ $('Turn In').first().json.conversationId }}"
+       },
+       {
+        "id": "bd2e48b6-4845-40e9-b364-bb119c4e22ac",
+        "name": "contactId",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.contactId || '' }}"
+       },
+       {
+        "id": "9c8c49ad-bd9b-41f4-8a16-1456e2e41b11",
+        "name": "sessionId",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.sessionId }}"
+       },
+       {
+        "id": "96506bc4-d1c9-4c69-be9e-a0b49f72aaa8",
+        "name": "senderPhone",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.senderPhone || '' }}"
+       },
+       {
+        "id": "8c278e27-759f-4b41-8285-17653788f909",
+        "name": "senderName",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.senderName || '' }}"
+       },
+       {
+        "id": "fe3f38a5-62e5-4fad-a6b7-015afc753d99",
+        "name": "source",
+        "type": "string",
+        "value": "={{ $('Turn In').first().json.source }}"
+       },
+       {
+        "id": "e820c7eb-00dd-4280-a5f9-b07c5fefd8b8",
+        "name": "botCheck",
+        "type": "object",
+        "value": "={{ $('Bot Active Gate').first().json.botCheck }}"
+       },
+       {
+        "id": "e13a23b3-3669-4f9e-af88-cd1405df577a",
+        "name": "continuityNote",
+        "type": "string",
+        "value": "={{ $('Compute Continuity').first().json.continuityNote || '' }}"
+       },
+       {
+        "id": "595ec0cb-8515-4ea8-9cec-039f02f3d106",
+        "name": "isOpen",
+        "type": "boolean",
+        "value": "={{ $('Compute Open State').first().json.isOpen === true }}"
+       },
+       {
+        "id": "b71d6408-ff3a-4442-8eef-c67de326252a",
+        "name": "officeOpen",
+        "type": "string",
+        "value": "={{ $('Compute Open State').first().json.officeOpen || '' }}"
+       },
+       {
+        "id": "0cb8ed4f-8553-4e92-9278-60dbf6174cff",
+        "name": "hoursLine",
+        "type": "string",
+        "value": "={{ $('Compute Open State').first().json.hoursLine || '' }}"
+       },
+       {
+        "id": "87fb0a33-5404-44b1-ad4c-5bc42bbd7bf5",
+        "name": "ownerEmail",
+        "type": "string",
+        "value": "={{ $('Fetch Office Hours').first().json.owner_email || '' }}"
+       },
+       {
+        "id": "92d6008e-0406-4c46-9f33-24e3e3d0cad7",
+        "name": "alertTopic",
+        "type": "string",
+        "value": "={{ $('Fetch Office Hours').first().json.alert_topic || '' }}"
+       },
+       {
+        "id": "73cd15fe-3d46-48ae-9212-9a76182283b6",
+        "name": "channelNote",
+        "type": "string",
+        "value": "={{ ({\"whatsapp\":\"The customer is writing to us on WhatsApp.\",\"webchat\":\"The customer is writing to us through the chat on our website.\",\"instagram\":\"The customer is writing to us on Instagram Direct. Use plain text only (no *bold* or other formatting) and keep every reply under 900 characters.\",\"messenger\":\"The customer is writing to us on Facebook Messenger. Use plain text only (no *bold* or other formatting) and keep every reply under 1800 characters.\",\"telegram\":\"The customer is writing to us on Telegram. Use plain text only (no *bold* or other formatting).\",\"tiktok\":\"The customer is writing to us on TikTok. Use plain text only and keep every reply under 900 characters.\",\"line\":\"The customer is writing to us on LINE. Use plain text only.\",\"sms\":\"The customer is writing to us by SMS. Use plain text only and keep every reply under 600 characters.\",\"email\":\"The customer is writing to us by email. Reply as a short, polite email body.\"})[$('Turn In').first().json.source] || '' }}"
+       }
+      ]
+     },
+     "options": {}
+    }
+   }
+  ],
+  "connections": {
+   "Turn In": {
+    "main": [
+     [
+      {
+       "node": "Bot Active Gate",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Bot Active Gate": {
+    "main": [
+     [
+      {
+       "node": "Fetch Office Hours",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Fetch Office Hours": {
+    "main": [
+     [
+      {
+       "node": "Compute Open State",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Compute Open State": {
+    "main": [
+     [
+      {
+       "node": "Keyword Escalation Check",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Keyword Escalation Check": {
+    "main": [
+     [
+      {
+       "node": "Escalate (keyword)",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Fetch Last Activity",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Escalate (keyword)": {
+    "main": [
+     [
+      {
+       "node": "Escalated",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Fetch Last Activity": {
+    "main": [
+     [
+      {
+       "node": "Compute Continuity",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Compute Continuity": {
+    "main": [
+     [
+      {
+       "node": "Has Audio?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Has Audio?": {
+    "main": [
+     [
+      {
+       "node": "Download Audio",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Has Image?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Download Audio": {
+    "main": [
+     [
+      {
+       "node": "Transcribe Voice Note",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Transcribe Voice Note": {
+    "main": [
+     [
+      {
+       "node": "Merge Audio Context",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Audio Context": {
+    "main": [
+     [
+      {
+       "node": "Turn Ready",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Has Image?": {
+    "main": [
+     [
+      {
+       "node": "Download Image",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Turn Ready",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Download Image": {
+    "main": [
+     [
+      {
+       "node": "Image to Base64",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Image to Base64": {
+    "main": [
+     [
+      {
+       "node": "Describe Image (vision)",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Describe Image (vision)": {
+    "main": [
+     [
+      {
+       "node": "Merge Image Context",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Image Context": {
+    "main": [
+     [
+      {
+       "node": "Turn Ready",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+   "name": null,
+   "description": null
+  }
+ }
+]

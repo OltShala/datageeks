@@ -1,0 +1,498 @@
+[
+ {
+  "updatedAt": "2026-10-01T13:00:57.000Z",
+  "createdAt": "2026-06-19T20:26:32.829Z",
+  "id": "yhWLLMXaUCMvHxNR",
+  "name": "Book Reservation (AI Tool)",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+   {
+    "id": "res-trigger",
+    "name": "Reservation Trigger",
+    "type": "n8n-nodes-base.executeWorkflowTrigger",
+    "typeVersion": 1.1,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "inputSource": "passthrough"
+    }
+   },
+   {
+    "id": "a3065978-65cc-4e27-ac13-f5bcc24db1f3",
+    "name": "Parse Input",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     220,
+     0
+    ],
+    "parameters": {
+     "jsCode": "// Tenant guard. \"Book Reservation\" is SHARED by every client: it must be told whose data this is (account id, or the\n// calling workflow for the internal test chat) and whose calendar to use. No default: a guess is how a\n// booking lands in the wrong hotel.\nconst inp = $input.first().json || {};\nlet d = inp;\nif (typeof inp.query === 'string') { try { d = JSON.parse(inp.query); } catch (e) { d = inp; } }\nelse if (inp.query && typeof inp.query === 'object') { d = inp.query; }\nconst acct = String(d.accountId ?? '').trim(), wf = String(d.workflowId ?? '').trim();\nif (!/^\\d+$/.test(acct) && !wf) throw new Error('Book Reservation was called without accountId or workflowId - refusing to guess whose data to use.');\nconst bad = (v) => !v || typeof v !== 'string' || v.startsWith('__RECEPLY_');\nif (bad(d.calendarId)) throw new Error('Book Reservation was called without this client calendarId (received ' + String(d.calendarId) + ') - refusing to guess whose calendar to use.');\nreturn [{ json: Object.assign({}, d, { accountId: acct, workflowId: wf }) }];"
+    }
+   },
+   {
+    "id": "a532e0b9-12d9-4f92-8992-659de743befd",
+    "name": "Confirm",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     440,
+     0
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT receply_confirm_booking($1::jsonb) AS r",
+     "options": {
+      "queryReplacement": "={{ [ JSON.stringify({ account_id: String($json.accountId || ''), workflow_id: String($json.workflowId || ''), turn: String($json.turn || ''), hold_code: String($json.holdCode || ''), conversation_id: String($json.conversationId || ''), email: String($json.Email || '') }) ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueRegularOutput",
+    "alwaysOutputData": true
+   },
+   {
+    "id": "9f2fa3d4-ae04-4e2c-ad95-333bddaeabdf",
+    "name": "Confirmed?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     660,
+     0
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose",
+       "version": 2
+      },
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "799ae618-c035-4fa6-8e0e-acb739ea89d8",
+        "leftValue": "={{ !!($json.r && $json.r.ok === true && !$json.r.already) }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "res-cal",
+    "name": "Create Calendar Event",
+    "type": "n8n-nodes-base.googleCalendar",
+    "typeVersion": 1.3,
+    "position": [
+     880,
+     -100
+    ],
+    "parameters": {
+     "resource": "event",
+     "operation": "create",
+     "calendar": {
+      "__rl": true,
+      "mode": "id",
+      "value": "={{ $('Parse Input').first().json.calendarId }}"
+     },
+     "start": "={{ $('Confirm').first().json.r.check_in_at }}",
+     "end": "={{ $('Confirm').first().json.r.check_out_at }}",
+     "additionalFields": {
+      "summary": "=Room {{ $('Confirm').first().json.r.room }} — {{ $('Confirm').first().json.r.first_name }} {{ $('Confirm').first().json.r.last_name }} ({{ $('Confirm').first().json.r.guests }} guest{{ $('Confirm').first().json.r.guests == 1 ? '' : 's' }})",
+      "description": "=Ticket {{ $('Confirm').first().json.r.ticket }} · booking no. {{ $('Confirm').first().json.r.booking_no }}\nGuests: {{ $('Confirm').first().json.r.guests }}\nPhone: {{ $('Confirm').first().json.r.phone }}\nEmail: {{ $('Confirm').first().json.r.email }}\nBooked via Receply ({{ $('Confirm').first().json.r.channel || 'chat' }}){{ $('Confirm').first().json.r.conversation_id ? ' - Chatwoot conversation ' + $('Confirm').first().json.r.conversation_id : '' }}"
+     }
+    },
+    "credentials": {
+     "googleCalendarOAuth2Api": {
+      "id": "8wAB0uxntdU6yfvs",
+      "name": "Google Calendar account"
+     }
+    },
+    "onError": "continueErrorOutput"
+   },
+   {
+    "id": "14f144c5-0761-4ee2-b823-66d734d90015",
+    "name": "Store Event",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     1100,
+     -160
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "UPDATE receply_reservations SET calendar_event_id = $2, updated_at = now() WHERE id = $1::bigint",
+     "options": {
+      "queryReplacement": "={{ [ String($('Confirm').first().json.r.reservation_id), String($json.id || '') ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "07a370ad-6d70-4cb2-96df-1f37e507a716",
+    "name": "Compose Messages",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     1320,
+     -160
+    ],
+    "parameters": {
+     "jsCode": "// The guest's email and the hotel's notice, built from the database row — exact dates, room and ticket,\n// in the guest's language. Kind: confirmed.\nconst r = $('Confirm').first().json.r || {};\nconst kind = 'confirmed';\nconst L = ['sq', 'sr', 'en'].includes(r.language) ? r.language : 'en';\nconst locale = { sq: 'sq-AL', sr: 'sr-Latn-ME', en: 'en-GB' }[L];\nconst day = (d) => { try { return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(String(d) + 'T00:00:00Z')); } catch (e) { return String(d); } };\nconst first = String(r.first_name || '').trim() || String(r.guest || '').split(' ')[0] || '';\nconst hotel = String(r.hotel || '').trim();\nconst type = r.room_type ? ' (' + r.room_type + ')' : '';\nconst stay = r.room + ', ' + day(r.check_in) + ' - ' + day(r.check_out);\nconst T = {\n  en: { hi: 'Dear ' + first + ',', team: 'The reception team',\n        cSubj: 'Booking confirmed - ' + r.ticket, cHead: hotel ? 'Your booking at ' + hotel + ' is confirmed.' : 'Your booking is confirmed.',\n        ref: 'Booking reference', room: 'Room', guests: 'Guests', cin: 'Check-in', cout: 'Check-out', from: 'from', by: 'by', nights: 'Nights',\n        change: 'To change or cancel your booking, write to us in the chat and mention your booking reference.', bye: 'We look forward to welcoming you!',\n        xSubj: 'Booking cancelled - ' + r.ticket, xHead: 'Your booking ' + r.ticket + ' (room ' + stay + ') has been cancelled.',\n        xHelp: 'If this was a mistake, write to us in the chat and we will gladly help.' },\n  sq: { hi: 'Përshëndetje ' + first + ',', team: 'Ekipi i recepsionit',\n        cSubj: 'Rezervimi u konfirmua - ' + r.ticket, cHead: hotel ? 'Rezervimi juaj në ' + hotel + ' është konfirmuar.' : 'Rezervimi juaj është konfirmuar.',\n        ref: 'Numri i rezervimit', room: 'Dhoma', guests: 'Numri i mysafirëve', cin: 'Hyrja', cout: 'Dalja', from: 'nga ora', by: 'deri në orën', nights: 'Netë',\n        change: 'Për të ndryshuar ose anuluar rezervimin, na shkruani në bisedë dhe përmendni numrin e rezervimit.', bye: 'Ju mirëpresim!',\n        xSubj: 'Rezervimi u anulua - ' + r.ticket, xHead: 'Rezervimi juaj ' + r.ticket + ' (dhoma ' + stay + ') është anuluar.',\n        xHelp: 'Nëse kjo është gabim, na shkruani në bisedë dhe ju ndihmojmë me kënaqësi.' },\n  sr: { hi: 'Dobar dan, ' + first + ',', team: 'Recepcija',\n        cSubj: 'Rezervacija potvrđena - ' + r.ticket, cHead: 'Vaša rezervacija je potvrđena' + (hotel ? ' - ' + hotel : '') + '.',\n        ref: 'Broj rezervacije', room: 'Soba', guests: 'Broj gostiju', cin: 'Prijava', cout: 'Odjava', from: 'od', by: 'do', nights: 'Broj noćenja',\n        change: 'Za izmjenu ili otkazivanje rezervacije pišite nam u razgovoru i navedite broj rezervacije.', bye: 'Radujemo se Vašem dolasku!',\n        xSubj: 'Rezervacija otkazana - ' + r.ticket, xHead: 'Vaša rezervacija ' + r.ticket + ' (soba ' + stay + ') je otkazana.',\n        xHelp: 'Ako je u pitanju greška, pišite nam u razgovoru i rado ćemo Vam pomoći.' },\n}[L];\nconst sign = hotel || T.team;\nconst subject = kind === 'confirmed' ? T.cSubj : T.xSubj;\nconst message = kind === 'confirmed'\n  ? [T.hi, '', T.cHead, '', T.ref + ': ' + r.ticket, T.room + ': ' + r.room + type, T.guests + ': ' + r.guests,\n     T.cin + ': ' + day(r.check_in) + ', ' + T.from + ' ' + r.check_in_time, T.cout + ': ' + day(r.check_out) + ', ' + T.by + ' ' + r.check_out_time,\n     T.nights + ': ' + r.nights, '', T.change, '', T.bye, sign].join('\\n')\n  : [T.hi, '', T.xHead, '', T.xHelp, '', sign].join('\\n');\nconst who = String(r.guest || '').trim() || (String(r.first_name || '') + ' ' + String(r.last_name || '')).trim();\nconst conv = r.conversation_id ? 'http://localhost:3000/app/accounts/' + r.account_id + '/conversations/' + r.conversation_id : 'http://localhost:3000';\nconst hotelSubject = (kind === 'confirmed' ? 'New booking: ' : 'Booking cancelled: ') + 'room ' + r.room + ', ' + r.check_in + ' -> ' + r.check_out + ' (' + r.ticket + ')';\nconst hotelText = [kind === 'confirmed' ? 'A guest booked through Receply.' : 'A guest cancelled through Receply.', '',\n  'Ticket: ' + r.ticket + (r.booking_no ? ' (booking no. ' + r.booking_no + ')' : ''), 'Guest: ' + who,\n  r.phone ? 'Phone: ' + r.phone : null, r.email ? 'Email: ' + r.email : null, 'Room: ' + r.room + type,\n  r.guests ? 'Guests: ' + r.guests : null, 'Check-in: ' + r.check_in + (r.check_in_time ? ' ' + r.check_in_time : ''),\n  'Check-out: ' + r.check_out + (r.check_out_time ? ' ' + r.check_out_time : ''), 'Channel: ' + (r.channel || 'chat'), 'Conversation: ' + conv, '',\n  'All reservations: the \"Reservations (Receply)\" tab of your Google Sheet.'].filter((x) => x !== null).join('\\n');\nreturn [{ json: { to: String(r.email || '').trim(), subject, message, hotelTo: r.owner_email || 'oltshala@gmail.com', hotelSubject, hotelText,\n  topic: r.alert_topic || '__RL_TOPIC__', click: conv,\n  pushTitle: kind === 'confirmed' ? 'Receply - new booking' : 'Receply - booking cancelled',\n  pushText: (kind === 'confirmed' ? '📅 ' : '❌ ') + who + ': room ' + r.room + ', ' + r.check_in + ' -> ' + r.check_out + (r.guests ? ', ' + r.guests + ' guest(s)' : '') + ' (' + r.ticket + ')' } }];"
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "9f626785-297f-419a-ab45-ca8220c9b1e8",
+    "name": "Email Guest",
+    "type": "n8n-nodes-base.executeWorkflow",
+    "typeVersion": 1.2,
+    "position": [
+     1540,
+     -160
+    ],
+    "parameters": {
+     "source": "database",
+     "workflowId": {
+      "__rl": true,
+      "mode": "id",
+      "value": "jYjHbUwfusqwTFTk"
+     },
+     "workflowInputs": {
+      "mappingMode": "defineBelow",
+      "value": {},
+      "matchingColumns": [],
+      "schema": [],
+      "attemptToConvertTypes": false,
+      "convertFieldsToString": true
+     },
+     "mode": "once",
+     "options": {
+      "waitForSubWorkflow": true
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "cbbf3657-65f5-4cc2-9a7e-fdd9dff151e4",
+    "name": "Push Hotel",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     1760,
+     -160
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://ntfy.sh",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ topic: $('Compose Messages').first().json.topic, title: $('Compose Messages').first().json.pushTitle, message: $('Compose Messages').first().json.pushText, priority: 4, tags: ['calendar'], click: $('Compose Messages').first().json.click }) }}",
+     "options": {
+      "timeout": 10000
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "4fa5332b-e865-4ce4-8cae-f3af1ff6e91c",
+    "name": "Email Hotel",
+    "type": "n8n-nodes-base.gmail",
+    "typeVersion": 2.2,
+    "position": [
+     1980,
+     -160
+    ],
+    "parameters": {
+     "sendTo": "={{ $('Compose Messages').first().json.hotelTo }}",
+     "subject": "={{ $('Compose Messages').first().json.hotelSubject }}",
+     "emailType": "text",
+     "message": "={{ $('Compose Messages').first().json.hotelText }}",
+     "options": {}
+    },
+    "credentials": {
+     "gmailOAuth2": {
+      "id": "xarPi1lV9VP6DBEl",
+      "name": "Gmail account"
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "res-return",
+    "name": "Return Booking",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     2200,
+     -160
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "da72930c-c7cf-42d0-860c-4253bd58dfd3",
+        "name": "result",
+        "type": "string",
+        "value": "={{ 'Booking CONFIRMED. Ticket ' + $('Confirm').first().json.r.ticket + '. Room ' + $('Confirm').first().json.r.room + ', ' + $('Confirm').first().json.r.check_in + ' to ' + $('Confirm').first().json.r.check_out + ', ' + $('Confirm').first().json.r.guests + ' guest(s), in the name of ' + $('Confirm').first().json.r.first_name + ' ' + $('Confirm').first().json.r.last_name + '. ' + (!$('Compose Messages').first().json.to ? 'There is no email address on this booking, so no confirmation email was sent.' : ($('Email Guest').first().json.sent === true ? 'A confirmation email was sent to ' + $('Compose Messages').first().json.to + '.' : 'The confirmation email to the guest could NOT be sent - give them the details in this chat.')) + ' The hotel has been notified. Now tell the guest the booking is confirmed and give them the ticket number.' }}"
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "a18ba0aa-e659-4217-8577-224d4e9d72fa",
+    "name": "Undo Reservation",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     1100,
+     40
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "UPDATE receply_reservations SET status = 'cancelled', cancelled_at = now(), updated_at = now(), note = coalesce(note || '; ', '') || 'calendar event could not be created: ' || $2 WHERE id = $1::bigint",
+     "options": {
+      "queryReplacement": "={{ [ String($('Confirm').first().json.r.reservation_id), String(($json.error && ($json.error.message || $json.error)) || 'unknown').slice(0, 200) ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueRegularOutput"
+   },
+   {
+    "id": "2890c5d2-b4e8-4e29-8d72-7dfec79f073f",
+    "name": "Calendar Failed",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     1320,
+     40
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "31d8c166-93e2-4887-bc67-fd068ed8d5ee",
+        "name": "result",
+        "type": "string",
+        "value": "The booking could NOT be completed: the hotel calendar could not be updated, so nothing is booked. Do not tell the guest it is confirmed. Apologize and offer to connect them with a person."
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "605c2eb3-567d-4c75-824a-6cb8e396b87b",
+    "name": "Not Booked",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     880,
+     160
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "a80f3c81-e079-4470-8f39-bb268079fbdb",
+        "name": "result",
+        "type": "string",
+        "value": "={{ ($('Confirm').first().json.r && $('Confirm').first().json.r.message) || ('The booking could not be confirmed (' + String(($('Confirm').first().json.error && ($('Confirm').first().json.error.message || $('Confirm').first().json.error)) || 'unknown error') + '). Nothing is booked. Apologize and offer to connect the guest with a person.') }}"
+       }
+      ]
+     },
+     "options": {}
+    }
+   }
+  ],
+  "connections": {
+   "Reservation Trigger": {
+    "main": [
+     [
+      {
+       "node": "Parse Input",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Parse Input": {
+    "main": [
+     [
+      {
+       "node": "Confirm",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Confirm": {
+    "main": [
+     [
+      {
+       "node": "Confirmed?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Confirmed?": {
+    "main": [
+     [
+      {
+       "node": "Create Calendar Event",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Not Booked",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Create Calendar Event": {
+    "main": [
+     [
+      {
+       "node": "Store Event",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Undo Reservation",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Undo Reservation": {
+    "main": [
+     [
+      {
+       "node": "Calendar Failed",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Store Event": {
+    "main": [
+     [
+      {
+       "node": "Compose Messages",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Compose Messages": {
+    "main": [
+     [
+      {
+       "node": "Email Guest",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Email Guest": {
+    "main": [
+     [
+      {
+       "node": "Push Hotel",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Push Hotel": {
+    "main": [
+     [
+      {
+       "node": "Email Hotel",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Email Hotel": {
+    "main": [
+     [
+      {
+       "node": "Return Booking",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "saveDataErrorExecution": "all",
+   "saveDataSuccessExecution": "all",
+   "saveManualExecutions": true,
+   "saveExecutionProgress": true
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionCounter": 7,
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+   "name": null,
+   "description": null
+  }
+ }
+]

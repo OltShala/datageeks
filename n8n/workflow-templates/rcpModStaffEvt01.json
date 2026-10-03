@@ -1,0 +1,309 @@
+[
+ {
+  "updatedAt": "2026-09-27T20:18:58.000Z",
+  "createdAt": "2026-09-27T20:11:58.306Z",
+  "id": "rcpModStaffEvt01",
+  "name": "Receply · Staff & Resume (shared module)",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+   {
+    "id": "0a948154-202c-4e4a-bec6-a592d3eb9184",
+    "name": "Staff In",
+    "type": "n8n-nodes-base.executeWorkflowTrigger",
+    "typeVersion": 1.1,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "workflowInputs": {
+      "values": [
+       {
+        "name": "accountId",
+        "type": "any"
+       },
+       {
+        "name": "cwToken",
+        "type": "any"
+       },
+       {
+        "name": "event",
+        "type": "any"
+       },
+       {
+        "name": "body",
+        "type": "any"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "id": "a74e1605-cb12-4cef-8fa2-8b54876b6e3e",
+    "name": "Resolved?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     220,
+     0
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "loose",
+       "version": 2
+      },
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "c4ccf7d6-80bb-4b62-995a-ab49ff31869e",
+        "leftValue": "={{ $('Staff In').first().json.event === 'resolved' }}",
+        "rightValue": "",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "parameters": {
+     "method": "POST",
+     "url": "={{ 'http://rails:3000/api/v1/accounts/' + $('Staff In').first().json.accountId + '/conversations/' + $('Staff In').first().json.body.id + '/custom_attributes' }}",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "api_access_token",
+        "value": "={{ $('Staff In').first().json.cwToken }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ custom_attributes: { bot_active: true, bot_paused_until: '1970-01-01T00:00:00.000Z', paused_by: '', resumed_by: 'resolved_handback', resumed_at: $now.toISO() } }) }}",
+     "options": {}
+    },
+    "id": "c94e7454-051e-41dd-a1ab-9fdb83794d9c",
+    "name": "Resume Bot On Resolve",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     460,
+     -120
+    ],
+    "onError": "continueRegularOutput"
+   },
+   {
+    "parameters": {
+     "method": "POST",
+     "url": "={{ 'http://rails:3000/api/v1/accounts/' + $('Staff In').first().json.accountId + '/conversations/' + $('Staff In').first().json.body.id + '/assignments' }}",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "api_access_token",
+        "value": "={{ $('Staff In').first().json.cwToken }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ assignee_id: null }) }}",
+     "options": {}
+    },
+    "id": "d05b6fc4-07b4-4fa2-b69b-37e594ebb40e",
+    "name": "Unassign On Resolve",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     680,
+     -120
+    ],
+    "onError": "continueRegularOutput"
+   },
+   {
+    "parameters": {
+     "method": "POST",
+     "url": "={{ 'http://rails:3000/api/v1/accounts/' + $('Staff In').first().json.accountId + '/conversations/' + $json.body.conversation.id + '/custom_attributes' }}",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "api_access_token",
+        "value": "={{ $('Staff In').first().json.cwToken }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ custom_attributes: { bot_active: false, bot_paused_until: $now.plus({ minutes: 30 }).toISO(), paused_by: 'human_reply', paused_at: $now.toISO() } }) }}",
+     "options": {}
+    },
+    "id": "c9deb372-10fa-448a-965b-abfa104982db",
+    "name": "Auto-Pause Bot On Human Reply",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     460,
+     80
+    ],
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "onError": "continueErrorOutput"
+   },
+   {
+    "name": "Record Staff Reply In Memory",
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "INSERT INTO n8n_chat_memory (session_id, message)\nSELECT $1, jsonb_build_object('type','ai','content',$2::text,'tool_calls','[]'::jsonb,\n       'additional_kwargs','{}'::jsonb,'response_metadata','{}'::jsonb,'invalid_tool_calls','[]'::jsonb)\n WHERE NOT $3::boolean AND length(btrim($4::text)) > 0",
+     "options": {
+      "queryReplacement": "={{ [ 'acct' + $('Staff In').first().json.accountId + ':' + (((((($json.body.conversation || {}).meta || {}).sender || {}).phone_number || '').replace('+','')) || ((((($json.body.conversation || {}).meta || {}).sender || {}).id) ? ('contact-' + $json.body.conversation.meta.sender.id) : ('conv-' + $json.body.conversation.id))), '[Reply from our staff member ' + ((($json.body.sender || {}).name) || 'our team') + ']: ' + ($json.body.content || ''), !!$json.body.private, ($json.body.content || '') ] }}"
+     }
+    },
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     460,
+     240
+    ],
+    "id": "rcp-record-staff-reply",
+    "credentials": {
+     "postgres": {
+      "id": "HlCBJZWnzlU5fYpY",
+      "name": "Chatwoot Postgres (n8n_memory)"
+     }
+    },
+    "onError": "continueErrorOutput"
+   },
+   {
+    "parameters": {
+     "sendTo": "oltshala@gmail.com",
+     "subject": "=[AI Receptionist] Staff reply handling failed - owner action needed",
+     "emailType": "text",
+     "message": "=A staff reply arrived but the AI could not be paused, or the reply could not be added to its memory.\nThe AI may answer this guest again while your team is handling the conversation.\n\nTime: {{ $now.toISO() }}\nError: {{ ($json.error && ($json.error.message || $json.error)) || 'no error message' }}\nConversation: http://localhost:3000/app/accounts/{{ $('Staff In').first().json.accountId }}/conversations/{{ (($('Staff In').first().json.body || {}).conversation || {}).id }}\n\nPlease check the conversation in Chatwoot.",
+     "options": {}
+    },
+    "id": "5221d459-3e63-4c31-b0b7-441528a9885c",
+    "name": "Staff Event Error Alert",
+    "type": "n8n-nodes-base.gmail",
+    "typeVersion": 2.1,
+    "position": [
+     720,
+     160
+    ],
+    "webhookId": "5d29374c-ed27-4b22-bb8b-880ef369f1fe",
+    "credentials": {
+     "gmailOAuth2": {
+      "id": "xarPi1lV9VP6DBEl",
+      "name": "Gmail account"
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Staff In": {
+    "main": [
+     [
+      {
+       "node": "Resolved?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Resolved?": {
+    "main": [
+     [
+      {
+       "node": "Resume Bot On Resolve",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Auto-Pause Bot On Human Reply",
+       "type": "main",
+       "index": 0
+      },
+      {
+       "node": "Record Staff Reply In Memory",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Resume Bot On Resolve": {
+    "main": [
+     [
+      {
+       "node": "Unassign On Resolve",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Auto-Pause Bot On Human Reply": {
+    "main": [
+     [],
+     [
+      {
+       "node": "Staff Event Error Alert",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Record Staff Reply In Memory": {
+    "main": [
+     [],
+     [
+      {
+       "node": "Staff Event Error Alert",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "settings": {
+   "executionOrder": "v1",
+   "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "versionMetadata": {
+   "name": null,
+   "description": null
+  }
+ }
+]

@@ -1,0 +1,7 @@
+# Never on GitHub — passwords, keys, tokens and logins for THIS PC only:
+.env
+secrets/
+
+# Made by the setup:
+demo-site/index.html
+*.log
