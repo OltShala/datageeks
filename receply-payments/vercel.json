@@ -1,0 +1,11 @@
+{
+  "cleanUrls": true,
+  "redirects": [{ "source": "/", "destination": "https://receply.net", "permanent": false }],
+  "headers": [
+    { "source": "/(.*)", "headers": [
+      { "key": "X-Robots-Tag", "value": "noindex" },
+      { "key": "Referrer-Policy", "value": "no-referrer" },
+      { "key": "X-Content-Type-Options", "value": "nosniff" }
+    ] }
+  ]
+}

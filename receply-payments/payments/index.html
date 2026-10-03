@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex" />
+<title>Receply — Secure checkout</title>
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  /* Tokens copied from receply.net so the checkout reads as part of the same site. */
+  :root{
+    --void:#05070d; --ink:#080b12; --surface:#0f1320; --surface-2:#121728;
+    --cream:#f3f4fb; --cream-dim:#c7cbe0; --muted:#8087a3;
+    --signal:#5b6cff; --signal-soft:#9fa8ff; --violet:#8b5cf6;
+    --ok:#3ddc97; --bad:#ff6b81;
+    --line:rgba(243,244,251,.09); --line-2:rgba(243,244,251,.055);
+    --r:20px;
+    --serif:"Fraunces",Georgia,serif; --sans:"Hanken Grotesk",-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{min-height:100%}
+  body{
+    background:var(--void); color:var(--cream); font-family:var(--sans); font-size:15px; line-height:1.5;
+    -webkit-font-smoothing:antialiased; display:flex; flex-direction:column; min-height:100vh;
+    background-image:
+      radial-gradient(60rem 40rem at 85% -10%, rgba(91,108,255,.16), transparent 60%),
+      radial-gradient(50rem 36rem at -10% 110%, rgba(139,92,246,.12), transparent 60%);
+  }
+  a{color:inherit;text-decoration:none}
+
+  header{border-bottom:1px solid var(--line-2)}
+  nav{max-width:1160px;margin:0 auto;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .logo{display:flex;align-items:center;gap:11px;font-family:var(--serif);font-size:22px;font-weight:600;letter-spacing:-.02em}
+  .logo img{width:34px;height:34px;object-fit:contain}
+  .nav-right{display:flex;align-items:center;gap:10px}
+  .secure{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--cream-dim);
+    padding:7px 13px;border:1px solid var(--line);border-radius:100px;background:rgba(243,244,251,.02)}
+  .secure svg{color:var(--ok)}
+  .lang{background:transparent;color:var(--cream-dim);border:1px solid var(--line);border-radius:100px;
+    padding:6px 10px;font:600 12px var(--sans);cursor:pointer}
+  .lang option{background:var(--surface);color:var(--cream)}
+
+  main{flex:1;display:flex;align-items:flex-start;justify-content:center;padding:48px 16px 40px}
+  .card{width:100%;max-width:460px;background:linear-gradient(180deg,var(--surface-2),var(--surface));
+    border:1px solid var(--line);border-radius:var(--r);padding:30px 28px;
+    box-shadow:0 30px 80px -30px rgba(0,0,0,.7),0 0 0 1px rgba(91,108,255,.04) inset}
+  .eyebrow{font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--signal-soft)}
+  h1{font-family:var(--serif);font-weight:500;font-size:30px;letter-spacing:-.02em;line-height:1.15;margin:8px 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+
+  .hold{display:inline-flex;align-items:center;gap:8px;margin-top:16px;font-size:13px;color:var(--cream-dim);
+    padding:6px 12px;border-radius:100px;background:rgba(91,108,255,.1);border:1px solid rgba(91,108,255,.25)}
+  .hold b{font-variant-numeric:tabular-nums;color:var(--cream)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--signal);box-shadow:0 0 0 4px rgba(91,108,255,.2)}
+
+  dl{margin:22px 0 0;border-top:1px solid var(--line)}
+  .row{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--line-2);font-size:14px}
+  dt{color:var(--muted)} dd{text-align:right;font-weight:500}
+
+  .total{display:flex;justify-content:space-between;align-items:baseline;margin:20px 0 18px}
+  .total span{color:var(--cream-dim);font-size:14px}
+  .total strong{font-family:var(--serif);font-weight:600;font-size:34px;letter-spacing:-.02em}
+
+  .chip{width:34px;height:24px;border-radius:5px;background:linear-gradient(135deg,var(--signal),var(--violet));flex:none}
+
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;width:100%;font:600 15px var(--sans);
+    padding:14px 22px;border-radius:100px;cursor:pointer;border:none;transition:transform .25s cubic-bezier(.2,.7,.2,1),background .25s,box-shadow .25s}
+  .btn-primary{background:var(--signal);color:#fff}
+  .btn-primary:hover{transform:translateY(-1px);box-shadow:0 10px 30px -10px rgba(91,108,255,.8)}
+  .btn-primary:disabled{opacity:.7;cursor:progress;transform:none;box-shadow:none}
+  .btn-ghost{background:rgba(243,244,251,.02);color:var(--cream);border:1px solid var(--line);margin-top:10px}
+  .btn-ghost:hover{border-color:rgba(243,244,251,.25)}
+  .spin{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .state{text-align:center}
+  .icon{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;margin:4px auto 16px}
+  .icon.ok{background:rgba(61,220,151,.12);color:var(--ok)}
+  .icon.bad{background:rgba(255,107,129,.12);color:var(--bad)}
+  .icon.info{background:rgba(91,108,255,.12);color:var(--signal-soft)}
+  .state h1{font-size:27px}
+  .state .sub{max-width:340px;margin:0 auto}
+  .conf{margin:22px 0 6px;padding:16px;border-radius:14px;background:rgba(243,244,251,.03);border:1px solid var(--line)}
+  .conf small{display:block;color:var(--muted);font-size:12px;letter-spacing:.1em;text-transform:uppercase}
+  .conf code{display:block;margin-top:6px;font:600 20px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.04em;word-break:break-all}
+  .copy{margin-top:10px;background:none;border:1px solid var(--line);color:var(--cream-dim);border-radius:100px;padding:5px 12px;font:500 12px var(--sans);cursor:pointer}
+  .error{margin-top:12px;color:var(--bad);font-size:13px;text-align:center;min-height:1em}
+
+  /* Form */
+  .sec{margin-top:24px}
+  .sec h2{font:600 12px var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:12px}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:13px;color:var(--cream-dim);margin-bottom:6px}
+  .field input{width:100%;background:rgba(5,7,13,.55);border:1px solid var(--line);border-radius:12px;color:var(--cream);
+    font:500 15px var(--sans);padding:12px 14px;outline:none;transition:border-color .2s,box-shadow .2s}
+  .field input::placeholder{color:#565d78}
+  .field input:focus{border-color:var(--signal);box-shadow:0 0 0 3px rgba(91,108,255,.18)}
+  .field input[readonly]{color:var(--cream-dim);background:rgba(243,244,251,.03)}
+  .field input[aria-invalid="true"]{border-color:var(--bad)}
+  .field .msg{display:block;color:var(--bad);font-size:12px;margin-top:5px;min-height:0}
+  .field .msg:empty{display:none}
+  .cardnum{position:relative}
+  .cardnum input{padding-right:52px;font-variant-numeric:tabular-nums;letter-spacing:.04em}
+  .cardnum .brand{position:absolute;right:12px;top:50%;transform:translateY(-50%);font:700 11px var(--sans);
+    color:var(--muted);letter-spacing:.06em}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .hint{display:flex;gap:10px;align-items:flex-start;padding:11px 13px;border-radius:12px;margin-bottom:14px;
+    border:1px dashed rgba(91,108,255,.35);background:rgba(91,108,255,.07);font-size:12.5px;color:var(--cream-dim)}
+  .hint .chip{width:28px;height:20px;margin-top:1px}
+  .hint button{background:none;border:none;color:var(--signal-soft);font:600 12.5px var(--sans);cursor:pointer;padding:0;
+    text-decoration:underline;text-underline-offset:3px;margin-top:4px}
+  .safe{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:12px;font-size:12px;color:var(--muted)}
+
+  footer{padding:20px 16px 28px;text-align:center;color:var(--muted);font-size:12px}
+  footer a{color:var(--cream-dim)}
+  [hidden]{display:none!important}
+
+  @media (max-width:480px){
+    main{padding-top:28px}
+    .card{padding:24px 18px}
+    h1{font-size:26px}
+    .secure span{display:none}
+  }
+</style>
+</head>
+<body>
+<header>
+  <nav>
+    <a class="logo" href="https://receply.net"><img src="/logo-icon.png" alt="" /> Receply</a>
+    <div class="nav-right">
+      <span class="secure"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span data-t="secure">Secure checkout</span></span>
+      <select class="lang" id="lang" aria-label="Language"><option value="en">EN</option><option value="sq">SQ</option></select>
+    </div>
+  </nav>
+</header>
+
+<main>
+  <!-- Checkout -->
+  <section class="card" id="v-pay" hidden>
+    <div class="eyebrow" data-t="eyebrow">Deposit payment</div>
+    <h1 data-t="title">Complete your booking</h1>
+    <p class="sub" id="hotel"></p>
+    <div class="hold" id="hold" hidden><span class="dot"></span><span data-t="held">Room held for</span> <b id="countdown">--:--</b></div>
+
+    <dl id="summary">
+      <div class="row" id="r-room"><dt data-t="room">Room</dt><dd id="d-room"></dd></div>
+      <div class="row" id="r-dates"><dt data-t="dates">Dates</dt><dd id="d-dates"></dd></div>
+      <div class="row" id="r-guests"><dt data-t="guests">Guests</dt><dd id="d-guests"></dd></div>
+    </dl>
+
+    <!-- Card fields deliberately have no name/cc-autocomplete: the browser must not offer saved real cards,
+         and their values are never sent anywhere (only the outcome is). -->
+    <form id="form" novalidate autocomplete="off">
+      <div class="sec">
+        <h2 data-t="detailsTitle">Your details</h2>
+        <div class="field"><label for="f-res" data-t="resId">Ticket ID</label>
+          <input id="f-res" placeholder="TKT-123456789" maxlength="13" autocapitalize="characters" spellcheck="false" /><span class="msg" id="m-res"></span></div>
+        <div class="field"><label for="f-name" data-t="fullName">Full name</label>
+          <input id="f-name" maxlength="100" autocomplete="name" /><span class="msg" id="m-name"></span></div>
+        <div class="field"><label for="f-email" data-t="email">Email (for the receipt)</label>
+          <input id="f-email" type="email" maxlength="200" autocomplete="email" placeholder="name@example.com" /><span class="msg" id="m-email"></span></div>
+      </div>
+
+      <div class="sec">
+        <h2 data-t="cardTitle">Card details</h2>
+        <div class="hint"><span class="chip"></span><div><span data-t="testHint"></span><br /><button type="button" id="fill" data-t="useTest">Fill test card</button></div></div>
+        <div class="field"><label for="f-card" data-t="cardNo">Card number</label>
+          <div class="cardnum"><input id="f-card" inputmode="numeric" autocomplete="off" placeholder="1234 1234 1234 1234" maxlength="23" /><span class="brand" id="brand"></span></div>
+          <span class="msg" id="m-card"></span></div>
+        <div class="two">
+          <div class="field"><label for="f-exp" data-t="expiry">Expiry (MM/YY)</label>
+            <input id="f-exp" inputmode="numeric" autocomplete="off" placeholder="MM/YY" maxlength="5" /><span class="msg" id="m-exp"></span></div>
+          <div class="field"><label for="f-cvc">CVC</label>
+            <input id="f-cvc" inputmode="numeric" autocomplete="off" placeholder="123" maxlength="4" /><span class="msg" id="m-cvc"></span></div>
+        </div>
+      </div>
+
+      <div class="total" id="total"><span data-t="due">Deposit due now</span><strong id="d-amount"></strong></div>
+      <button class="btn btn-primary" id="pay" type="submit"><span id="pay-label"></span></button>
+      <p class="safe"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span data-t="notStored">Card details never leave this page and are not stored.</span></p>
+      <p class="error" id="err"></p>
+    </form>
+  </section>
+
+  <!-- Paid -->
+  <section class="card state" id="v-ok" hidden>
+    <div class="icon ok"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+    <h1 data-t="okTitle">Payment received</h1>
+    <p class="sub" data-t="okText">Your booking is confirmed. We've sent the details to you on WhatsApp.</p>
+    <div class="conf"><small data-t="confId">Confirmation ID</small><code id="conf"></code><button class="copy" id="copy" data-t="copy">Copy</button></div>
+    <a class="btn btn-ghost" id="back" data-t="back">Back to WhatsApp</a>
+  </section>
+
+  <!-- Declined -->
+  <section class="card state" id="v-bad" hidden>
+    <div class="icon bad"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M7 7l10 10M17 7L7 17"/></svg></div>
+    <h1 data-t="badTitle">Card declined</h1>
+    <p class="sub" data-t="badText">Your room is still on hold. You can try again.</p>
+    <button class="btn btn-primary" id="retry" style="margin-top:22px" data-t="retry">Try again</button>
+  </section>
+
+  <!-- Expired / invalid -->
+  <section class="card state" id="v-info" hidden>
+    <div class="icon info"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+    <h1 id="info-title"></h1>
+    <p class="sub" id="info-text"></p>
+    <a class="btn btn-ghost" id="back2" style="margin-top:22px" data-t="back">Back to WhatsApp</a>
+  </section>
+</main>
+
+<footer><span data-t="footer">Demo checkout — no real money is charged.</span> · <a href="https://receply.net">receply.net</a></footer>
+
+<script>
+(() => {
+  const T = {
+    en: {
+      secure:'Secure checkout', eyebrow:'Deposit payment', title:'Complete your booking', held:'Room held for',
+      room:'Room', dates:'Dates', guests:'Guests', due:'Deposit due now',
+      detailsTitle:'Your details', resId:'Ticket ID', fullName:'Full name', email:'Email (for the receipt)',
+      cardTitle:'Card details', cardNo:'Card number', expiry:'Expiry (MM/YY)',
+      testHint:'Demo checkout: use test card 4242 4242 4242 4242, any future date and any CVC. Use 4000 0000 0000 0002 to see a declined payment.',
+      useTest:'Fill test card', notStored:'Card details never leave this page and are not stored.',
+      pay:'Pay', payDeposit:'Pay deposit', processing:'Processing…',
+      errRes:'Enter your ticket ID: TKT- followed by 9 digits (e.g. TKT-123456789).', errName:'Enter your full name.', errEmail:'Enter a valid email address.',
+      errCard:'This card number is not valid.', errRealCard:'Real cards are not accepted in this demo. Use the test card above.',
+      errExp:'Enter a valid expiry date in the future.', errCvc:'Enter the 3 or 4 digit CVC.',
+      okTitle:'Payment received',
+      okText:"Your booking is confirmed. We've sent the details to you on WhatsApp.", confId:'Confirmation ID',
+      copy:'Copy', copied:'Copied', back:'Back to WhatsApp', badTitle:'Card declined',
+      badText:'Your card was declined and nothing was charged. Your room is still on hold, so you can try again.', retry:'Try again',
+      expTitle:'Link expired', expText:'This payment link has expired or was already used. Message us on WhatsApp for a new one.',
+      fail:'Something went wrong. Please try again.', footer:'Demo checkout — no real money is charged.',
+      night:'night', nights:'nights'
+    },
+    sq: {
+      secure:'Pagesë e sigurt', eyebrow:'Pagesa e depozitës', title:'Përfundoni rezervimin', held:'Dhoma mbahet edhe',
+      room:'Dhoma', dates:'Datat', guests:'Mysafirë', due:"Depozita për t'u paguar tani",
+      detailsTitle:'Të dhënat tuaja', resId:'ID e tiketës', fullName:'Emri dhe mbiemri', email:'Email (për faturën)',
+      cardTitle:'Të dhënat e kartelës', cardNo:'Numri i kartelës', expiry:'Skadimi (MM/VV)',
+      testHint:'Pagesë demo: përdorni kartelën test 4242 4242 4242 4242, çdo datë në të ardhmen dhe çdo CVC. Për një pagesë të refuzuar përdorni 4000 0000 0000 0002.',
+      useTest:'Plotëso kartelën test', notStored:'Të dhënat e kartelës nuk dërgohen dhe nuk ruhen askund.',
+      pay:'Paguaj', payDeposit:'Paguaj depozitën', processing:'Duke procesuar…',
+      errRes:'Shkruani ID-në e tiketës: TKT- e ndjekur nga 9 shifra (p.sh. TKT-123456789).', errName:'Shkruani emrin dhe mbiemrin.', errEmail:'Shkruani një email të vlefshëm.',
+      errCard:'Numri i kartelës nuk është i vlefshëm.', errRealCard:'Kartelat e vërteta nuk pranohen në këtë demo. Përdorni kartelën test më sipër.',
+      errExp:'Shkruani një datë skadimi të vlefshme në të ardhmen.', errCvc:'Shkruani CVC-në me 3 ose 4 shifra.',
+      okTitle:'Pagesa u pranua',
+      okText:'Rezervimi juaj është konfirmuar. Detajet jua kemi dërguar në WhatsApp.', confId:'ID e konfirmimit',
+      copy:'Kopjo', copied:'U kopjua', back:'Kthehu te WhatsApp', badTitle:'Kartela u refuzua',
+      badText:'Kartela juaj u refuzua dhe nuk u tërhoq asgjë. Dhoma juaj mbetet e mbajtur, ndaj mund të provoni sërish.', retry:'Provo sërish',
+      expTitle:'Linku ka skaduar', expText:'Ky link pagese ka skaduar ose është përdorur tashmë. Na shkruani në WhatsApp për një link të ri.',
+      fail:'Diçka shkoi keq. Ju lutemi provoni sërish.', footer:'Pagesë demo — nuk tërhiqen para të vërteta.',
+      night:'natë', nights:'net'
+    }
+  };
+
+  // Demo only: these published test numbers are the ONLY cards accepted; anything else is refused in the browser.
+  // Card fields are never sent to the server — only the outcome (pay / decline) is.
+  const TEST_CARDS = { '4242424242424242': 'pay', '5555555555554444': 'pay', '4000000000000002': 'decline' };
+
+  // Booking details come from the link n8n sends, e.g.
+  // /payments?ticket=TKT-123456789&room=Double%20Room&in=2026-10-12&out=2026-10-14&guests=2&amount=50&exp=2026-10-03T14:30:00Z
+  // Ticket IDs look like TKT-123456789. Typing just the 9 digits (or lower case) is accepted and normalised.
+  const TICKET = /^TKT-\d{9}$/;
+  function normTicket(s) {
+    s = String(s).trim().toUpperCase().replace(/\s+/g, '');
+    if (/^\d{9}$/.test(s)) return 'TKT-' + s;
+    if (/^TKT\d{9}$/.test(s)) return 'TKT-' + s.slice(3);
+    return s;
+  }
+
+  const q = new URLSearchParams(location.search);
+  const P = {
+    r: normTicket(q.get('ticket') || q.get('r') || ''),
+    room: q.get('room') || '', cin: q.get('in') || '', cout: q.get('out') || '',
+    guests: q.get('guests') || '', amount: parseFloat(q.get('amount')),
+    cur: (q.get('cur') || 'EUR').toUpperCase(), hotel: q.get('hotel') || 'Receply Demo Hotel',
+    name: q.get('name') || '',
+    exp: q.get('exp') ? new Date(q.get('exp')) : null,
+    back: 'https://wa.me/' + ((q.get('wa') || '15551468677').replace(/\D/g, ''))
+  };
+  const hasAmount = !isNaN(P.amount) && P.amount > 0;
+
+  let lang = 'en';
+  try { lang = localStorage.getItem('rcp-lang') || (q.get('lang') === 'sq' || /^sq/i.test(navigator.language) ? 'sq' : 'en'); } catch (e) {}
+  const t = (k) => (T[lang] && T[lang][k]) || T.en[k];
+  const $ = (id) => document.getElementById(id);
+  const views = ['v-pay', 'v-ok', 'v-bad', 'v-info'];
+  let current = null, infoKind = null, busy = false, errs = {};
+
+  function show(id) { current = id; views.forEach(v => $(v).hidden = v !== id); window.scrollTo(0, 0); }
+  function money(n) {
+    try { return new Intl.NumberFormat(lang === 'sq' ? 'sq-AL' : 'en-GB', { style: 'currency', currency: P.cur }).format(n); }
+    catch (e) { return n.toFixed(2) + ' ' + P.cur; }
+  }
+  function day(s) {
+    const d = new Date(s + 'T00:00:00');
+    if (isNaN(d)) return s;
+    return d.toLocaleDateString(lang === 'sq' ? 'sq-AL' : 'en-GB', { day: 'numeric', month: 'short' });
+  }
+
+  function render() {
+    document.documentElement.lang = lang;
+    $('lang').value = lang;
+    document.querySelectorAll('[data-t]').forEach(el => { el.textContent = t(el.dataset.t); });
+    $('hotel').textContent = P.hotel;
+    $('d-room').textContent = P.room; $('r-room').hidden = !P.room;
+    $('d-guests').textContent = P.guests; $('r-guests').hidden = !P.guests;
+    const hasDates = P.cin && P.cout;
+    if (hasDates) {
+      const n = Math.round((new Date(P.cout) - new Date(P.cin)) / 864e5);
+      $('d-dates').textContent = day(P.cin) + ' → ' + day(P.cout) + (n > 0 ? ' · ' + n + ' ' + t(n === 1 ? 'night' : 'nights') : '');
+    }
+    $('r-dates').hidden = !hasDates;
+    $('summary').hidden = !P.room && !P.guests && !hasDates;
+    $('total').hidden = !hasAmount;
+    if (hasAmount) $('d-amount').textContent = money(P.amount);
+    $('pay-label').textContent = busy ? t('processing') : hasAmount ? t('pay') + ' ' + money(P.amount) : t('payDeposit');
+    $('back').href = $('back2').href = P.back;
+    if (infoKind) { $('info-title').textContent = t(infoKind + 'Title'); $('info-text').textContent = t(infoKind + 'Text'); }
+    ['res', 'name', 'email', 'card', 'exp', 'cvc'].forEach(f => {
+      $('m-' + f).textContent = errs[f] ? t(errs[f]) : '';
+      $('f-' + f).setAttribute('aria-invalid', errs[f] ? 'true' : 'false');
+    });
+  }
+  function info(kind) { infoKind = kind; render(); show('v-info'); stopTimer(); }
+
+  // Hold countdown (only when the link carries an expiry)
+  let timer = null;
+  function stopTimer() { if (timer) clearInterval(timer); timer = null; }
+  function tick() {
+    const left = Math.floor((P.exp - Date.now()) / 1000);
+    if (left <= 0) { if (current === 'v-pay' || current === 'v-bad') info('exp'); return; }
+    const h = Math.floor(left / 3600), m = Math.floor(left % 3600 / 60), s = left % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    $('countdown').textContent = (h ? h + ':' + pad(m) : pad(m)) + ':' + pad(s);
+  }
+
+  // ---- Field formatting ----
+  const digits = (s) => s.replace(/\D/g, '');
+  function brandOf(n) {
+    if (/^4/.test(n)) return 'VISA';
+    if (/^(5[1-5]|2[2-7])/.test(n)) return 'MC';
+    if (/^3[47]/.test(n)) return 'AMEX';
+    return '';
+  }
+  $('f-card').addEventListener('input', (e) => {
+    const n = digits(e.target.value).slice(0, 19);
+    e.target.value = n.replace(/(\d{4})(?=\d)/g, '$1 ');
+    $('brand').textContent = brandOf(n);
+    clearErr('card');
+  });
+  $('f-exp').addEventListener('input', (e) => {
+    let n = digits(e.target.value).slice(0, 4);
+    if (n.length === 1 && n > '1') n = '0' + n;
+    e.target.value = n.length > 2 ? n.slice(0, 2) + '/' + n.slice(2) : n;
+    clearErr('exp');
+  });
+  $('f-cvc').addEventListener('input', (e) => { e.target.value = digits(e.target.value).slice(0, 4); clearErr('cvc'); });
+  $('f-res').addEventListener('input', (e) => { const p = e.target.selectionStart; e.target.value = e.target.value.toUpperCase(); e.target.setSelectionRange(p, p); });
+  $('f-res').addEventListener('blur', (e) => { e.target.value = normTicket(e.target.value); });
+  ['res', 'name', 'email'].forEach(f => $('f-' + f).addEventListener('input', () => clearErr(f)));
+  function clearErr(f) { if (errs[f]) { delete errs[f]; render(); } }
+
+  $('fill').addEventListener('click', () => {
+    $('f-card').value = '4242 4242 4242 4242'; $('brand').textContent = 'VISA';
+    const d = new Date(); $('f-exp').value = '12/' + String((d.getFullYear() + 3) % 100).padStart(2, '0');
+    $('f-cvc').value = '123';
+    delete errs.card; delete errs.exp; delete errs.cvc; render();
+  });
+
+  function luhn(n) {
+    let sum = 0, alt = false;
+    for (let i = n.length - 1; i >= 0; i--) {
+      let d = +n[i]; if (alt) { d *= 2; if (d > 9) d -= 9; }
+      sum += d; alt = !alt;
+    }
+    return n.length >= 12 && sum % 10 === 0;
+  }
+
+  function validate() {
+    errs = {};
+    $('f-res').value = normTicket($('f-res').value);
+    if (!TICKET.test($('f-res').value)) errs.res = 'errRes';
+    if ($('f-name').value.trim().length < 2) errs.name = 'errName';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test($('f-email').value.trim())) errs.email = 'errEmail';
+    const card = digits($('f-card').value);
+    if (!luhn(card)) errs.card = 'errCard';
+    else if (!TEST_CARDS[card]) errs.card = 'errRealCard';
+    const m = /^(\d{2})\/(\d{2})$/.exec($('f-exp').value);
+    const now = new Date();
+    if (!m || +m[1] < 1 || +m[1] > 12 || new Date(2000 + +m[2], +m[1], 1) <= now) errs.exp = 'errExp';
+    if (!/^\d{3,4}$/.test($('f-cvc').value)) errs.cvc = 'errCvc';
+    render();
+    const first = ['res', 'name', 'email', 'card', 'exp', 'cvc'].find(f => errs[f]);
+    if (first) { $('f-' + first).focus(); return null; }
+    return TEST_CARDS[card];
+  }
+
+  async function submit(result) {
+    if (busy) return;
+    busy = true; $('err').textContent = '';
+    $('pay').disabled = true;
+    $('pay').insertAdjacentHTML('afterbegin', '<span class="spin" id="spin"></span>');
+    render();
+    try {
+      const [res] = await Promise.all([
+        fetch('/api/pay', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ticket_id: $('f-res').value, result,
+            guest_name: $('f-name').value.trim(), guest_email: $('f-email').value.trim(),
+            amount: hasAmount ? P.amount : null, currency: P.cur
+          }) }),
+        new Promise(r => setTimeout(r, 1400)) // feels like a real processor
+      ]);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'failed');
+      if (data.status === 'paid') {
+        $('conf').textContent = data.confirmation_id;
+        ['f-card', 'f-exp', 'f-cvc'].forEach(id => { $(id).value = ''; }); $('brand').textContent = '';
+        show('v-ok'); stopTimer();
+      }
+      else if (data.status === 'failed') show('v-bad');
+      else if (data.status === 'expired') info('exp');
+      else throw new Error('unexpected');
+    } catch (e) {
+      $('err').textContent = t('fail');
+    } finally {
+      busy = false; $('pay').disabled = false;
+      const s = $('spin'); if (s) s.remove();
+      render();
+    }
+  }
+
+  $('form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const result = validate();
+    if (result) submit(result);
+  });
+  $('retry').addEventListener('click', () => show('v-pay'));
+  $('copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('conf').textContent); $('copy').textContent = t('copied'); } catch (e) {}
+  });
+  $('lang').addEventListener('change', (e) => {
+    lang = e.target.value; try { localStorage.setItem('rcp-lang', lang); } catch (err) {}
+    render(); if (current === 'v-ok') $('copy').textContent = t('copy');
+  });
+
+  // Prefill what the link already knows; the reservation ID is locked when it came from the link.
+  if (TICKET.test(P.r)) { $('f-res').value = P.r; $('f-res').readOnly = true; }
+  if (P.name) $('f-name').value = P.name.slice(0, 100);
+
+  render();
+  if (P.exp && !isNaN(P.exp) && P.exp <= Date.now()) info('exp');
+  else {
+    show('v-pay');
+    if (P.exp && !isNaN(P.exp)) { $('hold').hidden = false; tick(); timer = setInterval(tick, 1000); }
+  }
+})();
+</script>
+</body>
+</html>
